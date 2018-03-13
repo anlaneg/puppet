@@ -96,7 +96,6 @@ describe "The lookup function" do
     Puppet[:code] = code
     Puppet::Util::Log.with_destination(Puppet::Test::LogCollector.new(logs)) do
       scope = compiler.topscope
-      scope['environment'] = env_name
       scope['domain'] = 'example.com'
       scope_additions.each_pair { |k, v| scope[k] = v }
       if explain
@@ -168,7 +167,7 @@ describe "The lookup function" do
           YAML
 
         it 'fails and reports error' do
-          expect { lookup('a') }.to raise_error("This runtime does not support hiera.yaml version 6 in #{code_dir}/hiera.yaml")
+          expect { lookup('a') }.to raise_error("This runtime does not support hiera.yaml version 6 (file: #{code_dir}/hiera.yaml)")
         end
       end
 
@@ -183,7 +182,7 @@ describe "The lookup function" do
 
         it 'fails and reports error' do
           expect { lookup('a') }.to raise_error(
-            "Backend 'yaml' is defined more than once. First defined at line 3 at #{code_dir}/hiera.yaml:5")
+            "Backend 'yaml' is defined more than once. First defined at (line: 3) (file: #{code_dir}/hiera.yaml, line: 5)")
         end
       end
 
@@ -194,7 +193,7 @@ describe "The lookup function" do
 
         it 'fails and reports error' do
           expect { lookup('a') }.to raise_error(
-            "hiera.yaml version 4 cannot be used in the global layer in #{code_dir}/hiera.yaml")
+            "hiera.yaml version 4 cannot be used in the global layer (file: #{code_dir}/hiera.yaml)")
         end
       end
 
@@ -213,7 +212,7 @@ describe "The lookup function" do
 
           it 'fails and reports error' do
             expect { lookup('a') }.to raise_error(
-              "Hierarchy name 'Common' defined more than once. First defined at line 3 at #{code_dir}/hiera.yaml:7")
+              "Hierarchy name 'Common' defined more than once. First defined at (line: 3) (file: #{code_dir}/hiera.yaml, line: 7)")
           end
         end
 
@@ -228,7 +227,7 @@ describe "The lookup function" do
 
           it 'fails and reports error' do
             expect { lookup('a') }.to raise_error(
-              "Use \"data_hash: hocon_data\" instead of \"hiera3_backend: hocon\" at #{code_dir}/hiera.yaml:4")
+              "Use \"data_hash: hocon_data\" instead of \"hiera3_backend: hocon\" (file: #{code_dir}/hiera.yaml, line: 4)")
           end
         end
 
@@ -244,7 +243,7 @@ describe "The lookup function" do
 
           it 'fails and reports error' do
             expect { lookup('a') }.to raise_error(
-              "One of data_hash, lookup_key, data_dig, or hiera3_backend must be defined in hierarchy 'Common' in #{code_dir}/hiera.yaml")
+              "One of data_hash, lookup_key, data_dig, or hiera3_backend must be defined in hierarchy 'Common' (file: #{code_dir}/hiera.yaml)")
           end
         end
 
@@ -262,7 +261,7 @@ describe "The lookup function" do
 
           it 'fails and reports error' do
             expect { lookup('a') }.to raise_error(
-              "Only one of data_hash, lookup_key, data_dig, or hiera3_backend can be defined in defaults in #{code_dir}/hiera.yaml")
+              "Only one of data_hash, lookup_key, data_dig, or hiera3_backend can be defined in defaults (file: #{code_dir}/hiera.yaml)")
           end
         end
 
@@ -278,7 +277,7 @@ describe "The lookup function" do
           it 'fails and reports error' do
             Puppet[:strict] = :error
             expect { lookup('a') }.to raise_error(
-              "Unable to find 'data_hash' function named 'nonesuch_txt_data' in #{code_dir}/hiera.yaml")
+              "Unable to find 'data_hash' function named 'nonesuch_txt_data' (file: #{code_dir}/hiera.yaml)")
           end
         end
 
@@ -296,7 +295,7 @@ describe "The lookup function" do
           it 'fails and reports error' do
             Puppet[:strict] = :error
             expect { lookup('a') }.to raise_error(
-              "'default_hierarchy' is only allowed in the module layer at #{code_dir}/hiera.yaml:5")
+              "'default_hierarchy' is only allowed in the module layer (file: #{code_dir}/hiera.yaml, line: 5)")
           end
         end
 
@@ -311,7 +310,7 @@ describe "The lookup function" do
 
           it 'fails and reports errors when strict == error' do
             Puppet[:strict] = :error
-            expect { lookup('a') }.to raise_error("Undefined variable '::nonesuch' at #{code_dir}/hiera.yaml:4")
+            expect { lookup('a') }.to raise_error("Undefined variable '::nonesuch' (file: #{code_dir}/hiera.yaml, line: 4)")
           end
         end
 
@@ -325,7 +324,7 @@ describe "The lookup function" do
 
           it 'fails and reports errors when strict == error' do
             Puppet[:strict] = :error
-            expect { lookup('a') }.to raise_error("Interpolation using method syntax is not allowed in this context in #{code_dir}/hiera.yaml")
+            expect { lookup('a') }.to raise_error("Interpolation using method syntax is not allowed in this context (file: #{code_dir}/hiera.yaml)")
           end
         end
       end
@@ -344,7 +343,7 @@ describe "The lookup function" do
 
           it 'fails and reports error' do
             expect { lookup('a') }.to raise_error(
-              "No data provider is registered for backend 'nonesuch' at #{env_dir}/spec/hiera.yaml:4")
+              "No data provider is registered for backend 'nonesuch' (file: #{env_dir}/spec/hiera.yaml, line: 4)")
           end
         end
 
@@ -365,7 +364,7 @@ describe "The lookup function" do
 
           it 'fails and reports error' do
             expect { lookup('a') }.to raise_error(
-              "Hierarchy name 'Common' defined more than once. First defined at line 3 at #{env_dir}/spec/hiera.yaml:9")
+              "Hierarchy name 'Common' defined more than once. First defined at (line: 3) (file: #{env_dir}/spec/hiera.yaml, line: 9)")
           end
         end
       end
@@ -381,7 +380,7 @@ describe "The lookup function" do
 
           it 'fails and reports error' do
             expect { lookup('a') }.to raise_error(
-              "'hiera3_backend' is only allowed in the global layer at #{env_dir}/spec/hiera.yaml:4")
+              "'hiera3_backend' is only allowed in the global layer (file: #{env_dir}/spec/hiera.yaml, line: 4)")
           end
         end
 
@@ -399,7 +398,7 @@ describe "The lookup function" do
           it 'fails and reports error' do
             Puppet[:strict] = :error
             expect { lookup('a') }.to raise_error(
-              "'default_hierarchy' is only allowed in the module layer at #{env_dir}/spec/hiera.yaml:5")
+              "'default_hierarchy' is only allowed in the module layer (file: #{env_dir}/spec/hiera.yaml, line: 5)")
           end
         end
       end
@@ -842,6 +841,24 @@ describe "The lookup function" do
           end
         end
       end
+
+      context 'that contains an array with duplicates' do
+        let(:common_yaml) { <<-YAML.unindent }
+          a:
+           - alpha
+           - bravo
+           - charlie
+           - bravo
+          YAML
+
+        it 'retains the duplicates when using default merge strategy' do
+          expect(lookup('a')).to eql(%w(alpha bravo charlie bravo))
+        end
+
+        it 'does deduplification when using merge strategy "unique"' do
+          expect(lookup('a', :merge => 'unique')).to eql(%w(alpha bravo charlie))
+        end
+      end
     end
 
     context 'with lookup_options configured using patterns' do
@@ -933,6 +950,8 @@ describe "The lookup function" do
                 bab: bab (from environment)
               bc:
                 bca: bca (from environment)
+            sa:
+              sa1: ['e', 'd', '--f']
             YAML
           'second.yaml' => <<-YAML.unindent,
             a:
@@ -946,6 +965,8 @@ describe "The lookup function" do
             c:
               ca:
                 cab: c.ca.cab
+            sa:
+              sa1: ['b', 'a', 'f', 'c']
             YAML
         }
       end
@@ -1026,6 +1047,28 @@ describe "The lookup function" do
           expect(lookup('a')).to eql({'aa' => { 'aaa' => 'a.aa.aaa', 'aab' => 'a.aa.aab' }})
         end
       end
+
+      context 'and lookup options use a hash' do
+
+        let(:env_lookup_options) { <<-YAML.unindent }
+          lookup_options:
+            'sa':
+              merge:
+                strategy: deep
+                knockout_prefix: --
+                sort_merged_arrays: true
+        YAML
+
+        it 'applies knockout_prefix and sort_merged_arrays' do
+          expect(lookup('sa')).to eql({ 'sa1' => %w(a b c d e) })
+        end
+
+        it 'overrides knockout_prefix and sort_merged_arrays with explicitly given values' do
+          expect(
+            lookup('sa', 'merge' => { 'strategy' => 'deep', 'knockout_prefix' => '##', 'sort_merged_arrays' => false })).to(
+              eql({ 'sa1' => %w(b a f c e d --f) }))
+        end
+      end
     end
 
     context 'and an environment Hiera v5 configuration using globs' do
@@ -1058,13 +1101,80 @@ describe "The lookup function" do
               glob_c: value glob_a
               YAML
             'b.yaml' => <<-YAML.unindent
-              glob_b:
-                c: value glob_b.c
-                d: value glob_b.d
+              glob_d:
+                a: value glob_d.a
+                b: value glob_d.b
             YAML
 
           }
         }
+      end
+
+      it 'finds environment data using globs' do
+        expect(lookup('glob_a')).to eql('value glob_a')
+        expect(warnings).to be_empty
+      end
+
+      it 'finds environment data using interpolated globs' do
+        expect(lookup('glob_d.a')).to eql('value glob_d.a')
+        expect(warnings).to be_empty
+      end
+    end
+
+    context 'and an environment Hiera v5 configuration using uris' do
+      let(:env_hiera_yaml) do
+        <<-YAML.unindent
+        ---
+        version: 5
+        hierarchy:
+          - name: Uris
+            uris:
+              - "http://test.example.com"
+              - "/some/arbitrary/path"
+              - "urn:with:opaque:path"
+              - "dothis%20-f%20bar"
+            data_hash: mod::uri_test_func
+        YAML
+      end
+
+      let(:env_modules) do
+        {
+          'mod' => { 'lib' => { 'puppet' => { 'functions' => { 'mod' => { 'uri_test_func.rb' => <<-RUBY } } } } }
+            Puppet::Functions.create_function(:'mod::uri_test_func') do
+              dispatch :uri_test_func do
+                param 'Hash', :options
+                param 'Puppet::LookupContext', :context
+              end
+
+              def uri_test_func(options, context)
+                { 'uri' => [ options['uri'] ] }
+              end
+            end
+            RUBY
+        }
+      end
+
+      it 'The uris are propagated in the options hash' do
+        expect(lookup('uri', 'merge' => 'unique')).to eql(
+          %w(http://test.example.com /some/arbitrary/path urn:with:opaque:path dothis%20-f%20bar))
+        expect(warnings).to be_empty
+      end
+
+      context 'and a uri uses bad syntax' do
+        let(:env_hiera_yaml) do
+          <<-YAML.unindent
+        ---
+        version: 5
+        hierarchy:
+          - name: Uris
+            uri: "dothis -f bar"
+            data_hash: mod::uri_test_func
+          YAML
+        end
+
+        it 'an attempt to lookup raises InvalidURIError' do
+          expect{ lookup('uri', 'merge' => 'unique') }.to raise_error(/bad URI/)
+        end
       end
     end
 
@@ -2080,8 +2190,9 @@ describe "The lookup function" do
             }
           end
 
-          it 'raises an error' do
-            expect { lookup('mod_a::a') }.to raise_error(Puppet::Error, /hiera.yaml version 3 cannot be used in a module/)
+          it 'raises a warning' do
+            expect(lookup('mod_a::a')).to eql('value mod_a::a (from environment)')
+            expect(warnings).to include(/hiera.yaml version 3 found at module root was ignored/)
           end
         end
 
@@ -2513,7 +2624,7 @@ describe "The lookup function" do
 
           it 'fails and reports error' do
             expect{lookup('mod_a::a')}.to raise_error(
-              "Return type of 'lookup_key' function named 'mod_a::pp_lookup_key' is incorrect, expects a value of type Undef, Scalar, Sensitive, Type, Hash, or Array, got Runtime")
+              "Return type of 'lookup_key' function named 'mod_a::pp_lookup_key' is incorrect, expects a RichData value, got Runtime")
           end
         end
       end
@@ -2945,6 +3056,121 @@ describe "The lookup function" do
       end
 
       let(:env_data) { data_files }
+
+      context 'and a module using eyaml with different options' do
+
+        let(:private_module_key) do
+          <<-PKCS7.unindent
+          -----BEGIN RSA PRIVATE KEY-----
+          MIIEogIBAAKCAQEAuqVpctipK4OMWM+RwKcd/mR4pg6qE3+ItPVC9TlvBrmDaN/y
+          YZRjQR+XovXSGuy/CneSQ9Qss0Ff3FKAmEeH0qN0V47a81hgLpjhLCX1n+Ov7r1Q
+          DC1ciTpVzHE4krN3rJ/RmDohitIqT1IYYhdcEdaMG9E26HIzn1QIwaDiYU3mfqWM
+          8CZExa0CeIsEzHRLSxuMi/xX0ENImCRUzY9GH88Cu2gUhpKlbVzJmVqGPgp94pJY
+          YM+SUb0XP1yRySpJMnVg98oCUrQO2OoE/Gax/djAi6hrJUzejPsEKdZ1yxM6OyJW
+          NjWZYs8izAxBqm7pv1hx5+X7AIPqwZTMVrB7TQIDAQABAoIBAHIex13QOYeAlGSM
+          7bpUtBMiTV6DItxvIyA5wen8ZvU+oqmSHDorp5BfB7E9Cm0qChkVSRot9fLYawtk
+          anoxakuRY4ZRs3AMvipfkXYT854CckTP/cykQ6soPuOU6plQIEEtKtMf3/hoTjRX
+          ps77J3FEtEAh6Kexg/zMPdpeS2xgULhk0P9ZQEg+JhLA5dq0p0nz3SBkuzcxei79
+          +Za/Tg1osD0AINOajdvPnKxvlmWJN0+LpGwVjFNhkoUXPeDyvq0z2V/Uqwz4HP2I
+          UGv4tz3SbzFc3Ie4lzgUZzCQgUK3u60pq1uyA6BRtxwdEmpn5v++jGXBGJZpWwcW
+          UNblESUCgYEA4aTH9+LHsNjLPs2FmSc7hNjwHG1rAHcDXTX2ccySjRcQvH4Z7xBL
+          di+SzZ2Tf8gSLycPRgRVCbrgCODpjoV2D5wWnyUHfWm4+GQxHURYa4UDx69tsSKE
+          OTRASJo7/Mz0M1a6YzgCzVRM/TO676ucmawzKUY5OUm1oehtODAiZOcCgYEA08GM
+          AMBOznys02xREJI5nLR6AveuTbIjF2efEidoxoW+1RrMOkcqaDTrJQ5PLM+oDDwD
+          iPzVjnroSbwJzFB71atIg7b7TwltgkXy7wNTedO2cm5u/I0q8tY2Jaa4Mz8JUnbe
+          yafvtS0/mY6A5k+8/2UIMFin2rqU9NC9EUPIo6sCgYBhOvAwELibq89osIbxB8bN
+          5+0PUtbYzG/WqnoXb193DIlZr7zdFththPJtR4lXdo7fYqViNluuZahEKyZ5E2lc
+          MJZO3VXs5LGf1wyS3/B55EdMtHs/6O+w9qL8pflTZb2UobqPJoOOltTWBoR24iwI
+          y/r/vhLKbMini9AEdjlb4QKBgGdYsax4Lr4GCQ8ScSnmQ6ngRyAFo5MV2pyEnRTu
+          GOuywKUe9AeJTgAXu5+VMT0Mh9aYv5zu0Ic+IvpBhIKr0RRCCR0Hg/VaA5Et9FeE
+          RwxRMFz+2rn1Z72moDyV9pZEMJeHnknK5WmGEOEvtGczCWmX9Hwr+Jf+sc4dxfiU
+          HWsLAoGAXWSX73p/6R4eRfF5zU2UFJPvDzhmwObAuvU4zKs9x7PMxZfvyt/eBCO1
+          fj2+hIR72RxVuHbLApF1BT6gPVLtNdvaNuCs8YlHcnx/Oi088F0ni7fL/xYBUvaB
+          7wTf188UJxP1ofVMZW00P4I9mR6BrOulv455gCwsmg2X7WtJU48=
+          -----END RSA PRIVATE KEY-----
+          PKCS7
+        end
+
+        let(:public_module_key) do
+          <<-PKCS7.unindent
+          -----BEGIN CERTIFICATE-----
+          MIIC2TCCAcGgAwIBAgIBATANBgkqhkiG9w0BAQUFADAAMCAXDTE3MDUzMTE2Mjc0
+          M1oYDzIwNjcwNTE5MTYyNzQzWjAAMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIB
+          CgKCAQEAuqVpctipK4OMWM+RwKcd/mR4pg6qE3+ItPVC9TlvBrmDaN/yYZRjQR+X
+          ovXSGuy/CneSQ9Qss0Ff3FKAmEeH0qN0V47a81hgLpjhLCX1n+Ov7r1QDC1ciTpV
+          zHE4krN3rJ/RmDohitIqT1IYYhdcEdaMG9E26HIzn1QIwaDiYU3mfqWM8CZExa0C
+          eIsEzHRLSxuMi/xX0ENImCRUzY9GH88Cu2gUhpKlbVzJmVqGPgp94pJYYM+SUb0X
+          P1yRySpJMnVg98oCUrQO2OoE/Gax/djAi6hrJUzejPsEKdZ1yxM6OyJWNjWZYs8i
+          zAxBqm7pv1hx5+X7AIPqwZTMVrB7TQIDAQABo1wwWjAPBgNVHRMBAf8EBTADAQH/
+          MB0GA1UdDgQWBBQkhoMgOyPzEe7tOOimNH2//PYF2TAoBgNVHSMEITAfgBQkhoMg
+          OyPzEe7tOOimNH2//PYF2aEEpAIwAIIBATANBgkqhkiG9w0BAQUFAAOCAQEAhRWc
+          Nz3PcUJllao5G/v4AyvjLgwB2JgjJgh6D3ILoOe9TrDSXD7ZV3F30vFae+Eztk86
+          pmM8x57E0HsuuY+Owf6/hvELtwbzf9N/lc9ySZSogGFoQeJ8rnCJAQ0FaPjqb7AN
+          xTaY9HTzr4dZG1f+sw32RUu2fDe7Deqgf85uMSZ1mtRTt9zvo8lMQxVA2nVOfwz2
+          Nxf+qSNYSCtf0/6iwfzHy0qPjaJnywgBCi3Lg2IMSqGUatxzH+9HWrBgD+ZYxmDz
+          2gW+EIU1Y/We/tbjIWaR1PD+IzeRJi5fHq60RKHPSdp7TGtV48bQRvyZXC7sVCRa
+          yxfX1IGYhCDzbFRQNg==
+          -----END CERTIFICATE-----
+          PKCS7
+        end
+
+        let(:module_keys_dir) do
+          keys = tmpdir('keys')
+          dir_contained_in(keys, {
+            private_key_name => private_module_key,
+            public_key_name => public_module_key
+          })
+          keys
+        end
+
+        let(:private_module_key_path) { File.join(module_keys_dir, private_key_name) }
+        let(:public_module_key_path) { File.join(module_keys_dir, public_key_name) }
+
+        let(:mod_a_files) do
+          {
+            'mod_a' => {
+              'hiera.yaml' => <<-YAML.unindent,
+                version: 5
+                hierarchy:
+                  - name: EYaml
+                    path: common.eyaml
+                    lookup_key: eyaml_lookup_key
+                    options:
+                      pkcs7_private_key: #{private_module_key_path}
+                      pkcs7_public_key: #{public_module_key_path}
+                YAML
+              'data' => {
+                'common.eyaml' => <<-YAML.unindent
+                ---
+                # "%{lookup('a')} (from module)"
+                mod_a::a: >
+                  ENC[PKCS7,MIIBiQYJKoZIhvcNAQcDoIIBejCCAXYCAQAxggEhMIIBHQIBADAFMAACAQEw
+                  DQYJKoZIhvcNAQEBBQAEggEAC+lvda8mX6XkgCBstNw4IQUDyFcS6M0mS9gZ
+                  ev4VBDeUK4AUNVnzzdbW0Mnj9LbqlpzFx96VGqSxsRBpe7BVD0kVo5jQsEMn
+                  nbrWOD1lvXYrXZMXBeD9xJbMbH5EiiFhbaXcEKRAVGaLVQKjXDENDQ/On+it
+                  1+wmmVwJynDJR0lsCz6dcSKvw6wnxBcv32qFyePvJuIf04CHMhaS4ykedYHK
+                  vagUn5uVXOv/8G0JPlZnQLyxjE0v0heb0Zj0mvcP2+Y5BSW50AQVrMWJNtdW
+                  aFEg6H5hpjduQfQh3iWVuDLnWhbP0sY2Grn5dTOxQP8aTDSsiTUcSeIAmjr/
+                  K8YRCjBMBgkqhkiG9w0BBwEwHQYJYIZIAWUDBAEqBBAjL7InlBjRuohLLcBx
+                  686ogCDkhCan8bCE7aX2nr75QtLF3q89pFIR4/NGl5+oGEO+qQ==]
+                YAML
+              }
+            }
+          }
+        end
+
+        let(:populated_env_dir) do
+          dir_contained_in(env_dir, DeepMerge.deep_merge!(environment_files, env_name => { 'modules' => mod_a_files }))
+          env_dir
+        end
+
+        it 'repeatedly finds data in environment and module' do
+          expect(lookup(['array_a', 'mod_a::a', 'hash_a'])).to eql([
+            ['array_a[0]', 'array_a[1]'],
+            "Encrypted value 'a' (from environment) (from module)",
+            {'hash_aa'=>{'aaa'=>'Encrypted value hash_a.hash_aa.aaa (from environment)'}}])
+        end
+      end
 
       it 'finds data in the environment' do
         expect(lookup('a')).to eql("Encrypted value 'a' (from environment)")

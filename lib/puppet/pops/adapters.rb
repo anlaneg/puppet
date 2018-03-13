@@ -11,6 +11,16 @@ module Adapters
     attr_accessor :documentation
   end
 
+  # An  empty alternative adapter is used when there is the need to
+  # attach a value to be used if the original is empty. This is used
+  # when a lazy evaluation takes place, and the decision how to handle an
+  # empty case must be delayed.
+  #
+  class EmptyAlternativeAdapter < Adaptable::Adapter
+    # @return [Object] The alternative value associated with an object
+    attr_accessor :empty_alternative
+  end
+
   # This class is for backward compatibility only. It's not really an adapter but it is
   # needed for the puppetlabs-strings gem
   # @deprecated
@@ -62,10 +72,14 @@ module Adapters
     def self.loader_for_model_object(model, file = nil, default_loader = nil)
       loaders = Puppet.lookup(:loaders) { nil }
       if loaders.nil?
-        default_loader
+        default_loader || Loaders.static_loader
       else
         loader_name = loader_name_by_source(loaders.environment, model, file)
-        loader_name.nil? ? default_loader || loaders.find_loader(nil) : loaders[loader_name]
+        if loader_name.nil?
+          default_loader || loaders[Loader::ENVIRONMENT_PRIVATE]
+        else
+          loaders[loader_name]
+        end
       end
     end
 
@@ -81,12 +95,14 @@ module Adapters
     #
     # The method returns `nil` when no module could be found.
     #
-    # @param scope
-    # @param instance
+    # @param environment [Puppet::Node::Environment] the current environment
+    # @param instance [Model::PopsObject] the AST for the code
+    # @param file [String] the path to the file for the code or `nil`
+    # @return [String] the name of the loader associated with the source
     # @api private
     def self.loader_name_by_source(environment, instance, file)
       file = instance.file if file.nil?
-      return nil if file.nil?
+      return nil if file.nil? || EMPTY_STRING == file
       pn_adapter = PathsAndNameCacheAdapter.adapt(environment) do |a|
         a.paths ||= environment.modulepath.map { |p| Pathname.new(p) }
         a.cache ||= {}

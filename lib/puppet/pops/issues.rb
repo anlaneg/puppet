@@ -49,7 +49,6 @@ module Issues
         # Evaluate the message block in the msg data's binding
         msgdata.format(hash, &message_block)
       rescue StandardError => e
-        MessageData
         raise RuntimeError, _("Error while reporting issue: %{code}. %{message}") % { code: issue_code, message: e.message }, caller
       end
     end
@@ -71,7 +70,7 @@ module Issues
 
     def format(hash, &block)
       @data = hash
-      instance_eval &block
+      instance_eval(&block)
     end
 
     # Obtains the label provider given as a key `:label` in the hash passed to #format. The label provider is
@@ -119,7 +118,7 @@ module Issues
   # @see MessageData
   # @api public
   #
-  def self.issue (issue_code, *args, &block)
+  def self.issue(issue_code, *args, &block)
     Issue.new(issue_code, *args, &block)
   end
 
@@ -235,7 +234,7 @@ module Issues
   end
 
   APPENDS_DELETES_NO_LONGER_SUPPORTED = hard_issue :APPENDS_DELETES_NO_LONGER_SUPPORTED, :operator do
-    _("The operator '%{operator}' is no longer supported. See http://links.puppetlabs.com/remove-plus-equals") % { operator: operator }
+    _("The operator '%{operator}' is no longer supported. See http://links.puppet.com/remove-plus-equals") % { operator: operator }
   end
 
   # For unsupported operators (e.g. += and -= in puppet 4).
@@ -354,7 +353,7 @@ module Issues
   # Issues when a variable is not a NAME
   #
   ILLEGAL_VARIABLE_EXPRESSION = hard_issue :ILLEGAL_VARIABLE_EXPRESSION do
-    _("Illegal variable expression. %{expresion} did not produce a variable name (String or Numeric).") % { expression: label.a_an_uc(semantic) }
+    _("Illegal variable expression. %{expression} did not produce a variable name (String or Numeric).") % { expression: label.a_an_uc(semantic) }
   end
 
   # Issues when an expression is used illegally in a query.
@@ -368,6 +367,10 @@ module Issues
   #
   NOT_VIRTUALIZEABLE = hard_issue :NOT_VIRTUALIZEABLE do
     _("Resource Defaults are not virtualizable")
+  end
+
+  CLASS_NOT_VIRTUALIZABLE = issue :CLASS_NOT_VIRTUALIZABLE do
+    _("Classes are not virtualizable")
   end
 
   # When an attempt is made to use multiple keys (to produce a range in Ruby - e.g. $arr[2,-1]).
@@ -437,8 +440,7 @@ module Issues
   end
 
   BAD_STRING_SLICE_KEY_TYPE = issue :BAD_STRING_SLICE_KEY_TYPE, :left_value, :actual_type do
-    actual_type_text = _("#{label.article(actual_type)} #{actual_type}")
-    _("A substring operation does not accept %{actual_type_text} as a character index. Expected an Integer") % { actual_type_text: actual_type_text }
+    _("A substring operation does not accept %{label_article} %{actual_type} as a character index. Expected an Integer") % { label_article: label.article(actual_type), actual_type: actual_type }
   end
 
   BAD_NOT_UNDEF_SLICE_TYPE = issue :BAD_NOT_UNDEF_SLICE_TYPE, :base_type, :actual do
@@ -502,6 +504,10 @@ module Issues
 
   NOT_NUMERIC = issue :NOT_NUMERIC, :value do
     _("The value '%{value}' cannot be converted to Numeric.") % { value: value }
+  end
+
+  NUMERIC_COERCION = issue :NUMERIC_COERCION, :before, :after do
+    _("The string '%{before}' was automatically coerced to the numerical value %{after}") % { before: before, after: after }
   end
 
   UNKNOWN_FUNCTION = issue :UNKNOWN_FUNCTION, :name do
@@ -575,7 +581,7 @@ module Issues
 
   DISCONTINUED_IMPORT = hard_issue :DISCONTINUED_IMPORT do
     #TRANSLATORS "import" is a function name and should not be translated
-    _("Use of 'import' has been discontinued in favor of a manifest directory. See http://links.puppetlabs.com/puppet-import-deprecation")
+    _("Use of 'import' has been discontinued in favor of a manifest directory. See http://links.puppet.com/puppet-import-deprecation")
   end
 
   IDEM_EXPRESSION_NOT_LAST = issue :IDEM_EXPRESSION_NOT_LAST do
@@ -607,10 +613,10 @@ module Issues
   end
 
   ILLEGAL_NODE_INHERITANCE = issue :ILLEGAL_NODE_INHERITANCE do
-    _("Node inheritance is not supported in Puppet >= 4.0.0. See http://links.puppetlabs.com/puppet-node-inheritance-deprecation")
+    _("Node inheritance is not supported in Puppet >= 4.0.0. See http://links.puppet.com/puppet-node-inheritance-deprecation")
   end
 
-  ILLEGAL_OVERRIDEN_TYPE = issue :ILLEGAL_OVERRIDEN_TYPE, :actual do
+  ILLEGAL_OVERRIDDEN_TYPE = issue :ILLEGAL_OVERRIDDEN_TYPE, :actual do
     _("Resource Override can only operate on resources, got: %{actual}") % { actual: label.label(actual) }
   end
 
@@ -734,6 +740,10 @@ module Issues
     _('Heredoc without any following lines of text')
   end
 
+  HEREDOC_EMPTY_ENDTAG = hard_issue :HEREDOC_EMPTY_ENDTAG do
+    _('Heredoc with an empty endtag')
+  end
+
   HEREDOC_MULTIPLE_AT_ESCAPES = hard_issue :HEREDOC_MULTIPLE_AT_ESCAPES, :escapes do
     _("An escape char for @() may only appear once. Got '%{escapes}'") % { escapes: escapes.join(', ') }
   end
@@ -742,9 +752,20 @@ module Issues
     _("Illegal %{format} Byte Order mark at beginning of input: %{bom} - remove these from the puppet source") % { format: format_name, bom: bytes }
   end
 
+  NO_SUCH_FILE_OR_DIRECTORY = hard_issue :NO_SUCH_FILE_OR_DIRECTORY, :file do
+    _('No such file or directory: %{file}') % { file: file }
+  end
+
+  NOT_A_FILE = hard_issue :NOT_A_FILE, :file do
+    _('%{file} is not a file') % { file: file }
+  end
+
   NUMERIC_OVERFLOW = hard_issue :NUMERIC_OVERFLOW, :value do
-    range_end = value > 0 ? _('max') : _('min')
-    _("#{label.a_an_uc(semantic)} resulted in a value outside of Puppet Integer #{range_end} range, got '#{"%#+x" % value}'")
+    if value > 0
+      _("%{expression} resulted in a value outside of Puppet Integer max range, got '%{value}'") % { expression: label.a_an_uc(semantic), value: ("%#+x" % value) }
+    else
+      _("%{expression} resulted in a value outside of Puppet Integer min range, got '%{value}'") % { expression: label.a_an_uc(semantic), value: ("%#+x" % value) }
+    end
   end
 
   HIERA_UNSUPPORTED_VERSION = hard_issue :HIERA_UNSUPPORTED_VERSION, :version do
@@ -764,9 +785,12 @@ module Issues
   end
 
   HIERA_BACKEND_MULTIPLY_DEFINED = hard_issue :HIERA_BACKEND_MULTIPLY_DEFINED, :name, :first_line do
-    msg = _("Backend '%{name}' is defined more than once") % { name: name }
+    msg = _("Backend '%{name}' is defined more than once.") % { name: name }
     fl = first_line
-    fl ? _("%{msg}. First defined at line %{line}") % { msg: msg, line: fl } : msg
+    if fl
+      msg += ' ' + _("First defined at %{error_location}") % { error_location: Puppet::Util::Errors.error_location(nil, fl) }
+    end
+    msg
   end
 
   HIERA_NO_PROVIDER_FOR_BACKEND = hard_issue :HIERA_NO_PROVIDER_FOR_BACKEND, :name do
@@ -774,9 +798,12 @@ module Issues
   end
 
   HIERA_HIERARCHY_NAME_MULTIPLY_DEFINED = hard_issue :HIERA_HIERARCHY_NAME_MULTIPLY_DEFINED, :name, :first_line do
-    msg = _("Hierarchy name '%{name}' defined more than once") % { name: name }
+    msg = _("Hierarchy name '%{name}' defined more than once.") % { name: name }
     fl = first_line
-    fl ? _("%{msg}. First defined at line %{line}") % { msg: msg, line: fl } : msg
+    if fl
+      msg += ' ' + _("First defined at %{error_location}") % { error_location: Puppet::Util::Errors.error_location(nil, fl) }
+    end
+    msg
   end
 
   HIERA_V3_BACKEND_NOT_GLOBAL = hard_issue :HIERA_V3_BACKEND_NOT_GLOBAL do
@@ -829,6 +856,46 @@ module Issues
 
   HIERA_INTERPOLATION_METHOD_SYNTAX_NOT_ALLOWED = hard_issue :HIERA_INTERPOLATION_METHOD_SYNTAX_NOT_ALLOWED do
     _('Interpolation using method syntax is not allowed in this context')
+  end
+
+  SERIALIZATION_ENDLESS_RECURSION = hard_issue :SERIALIZATION_ENDLESS_RECURSION, :type_name do
+    _('Endless recursion detected when attempting to serialize value of class %{type_name}') % { :type_name => type_name }
+  end
+
+  SERIALIZATION_DEFAULT_CONVERTED_TO_STRING = issue :SERIALIZATION_DEFAULT_CONVERTED_TO_STRING, :path, :klass, :value do
+    _("%{path} contains the special value default. It will be converted to the String 'default'") % { path: path }
+  end
+
+  SERIALIZATION_UNKNOWN_CONVERTED_TO_STRING = issue :SERIALIZATION_UNKNOWN_CONVERTED_TO_STRING, :path, :klass, :value do
+    _("%{path} contains %{klass} value. It will be converted to the String '%{value}'") % { path: path, klass: label.a_an(klass), value: value }
+  end
+
+  SERIALIZATION_UNKNOWN_KEY_CONVERTED_TO_STRING = issue :SERIALIZATION_UNKNOWN_KEY_CONVERTED_TO_STRING, :path, :klass, :value do
+    _("%{path} contains a hash with %{klass} key. It will be converted to the String '%{value}'") % { path: path, klass: label.a_an(klass), value: value }
+  end
+
+  FEATURE_NOT_SUPPORTED_WHEN_SCRIPTING = issue :NOT_SUPPORTED_WHEN_SCRIPTING, :feature do
+    _("The feature '%{feature}' is only available when compiling a catalog") % { feature: feature }
+  end
+
+  CATALOG_OPERATION_NOT_SUPPORTED_WHEN_SCRIPTING = issue :CATALOG_OPERATION_NOT_SUPPORTED_WHEN_SCRIPTING, :operation do
+    _("The catalog operation '%{operation}' is only available when compiling a catalog") % { operation: operation }
+  end
+
+  TASK_OPERATION_NOT_SUPPORTED_WHEN_COMPILING = issue :TASK_OPERATION_NOT_SUPPORTED_WHEN_COMPILING, :operation do
+    _("The task operation '%{operation}' is not available when compiling a catalog") % { operation: operation }
+  end
+
+  TASK_MISSING_BOLT = issue :TASK_MISSING_BOLT, :action do
+    _("The 'bolt' library is required to %{action}") % { action: action }
+  end
+
+  UNKNOWN_TASK = issue :UNKNOWN_TASK, :type_name do
+    _('Task not found: %{type_name}') % { type_name: type_name }
+  end
+
+  LOADER_FAILURE = issue :LOADER_FAILURE, :type do
+    _('Failed to load: %{type_name}') % { type: type }
   end
 end
 end

@@ -32,7 +32,7 @@ class Puppet::Util::Feature
       #    configured to always cache
       if block_given?     ||
           @results[name]  ||
-          (@results.has_key?(name) && (Puppet[:always_cache_features] || !Puppet[:always_retry_plugins]))
+          (@results.has_key?(name) && (!Puppet[:always_retry_plugins]))
         @results[name]
       else
         @results[name] = test(name, options)
@@ -86,8 +86,8 @@ class Puppet::Util::Feature
 
     begin
       require lib
-    rescue ScriptError
-      Puppet.debug "Failed to load library '#{lib}' for feature '#{name}'"
+    rescue ScriptError => detail
+      Puppet.debug _("Failed to load library '%{lib}' for feature '%{name}': %{detail}") % { lib: lib, name: name, detail: detail }
       return false
     end
     true

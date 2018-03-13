@@ -24,10 +24,14 @@ class Puppet::Provider::NameService < Puppet::Provider
 
     def instances
       objects = []
-      listbyname do |name|
-        objects << new(:name => name, :ensure => :present)
+      begin
+        method = Puppet::Etc.method(:"get#{section}ent")
+        while ent = method.call
+          objects << new(:name => ent.name, :canonical_name => ent.canonical_name, :ensure => :present)
+        end
+      ensure
+        Puppet::Etc.send("end#{section}ent")
       end
-
       objects
     end
 
@@ -37,7 +41,9 @@ class Puppet::Provider::NameService < Puppet::Provider
     end
 
     def options(name, hash)
-      raise Puppet::DevError, "#{name} is not a valid attribute for #{resource_type.name}" unless resource_type.valid_parameter?(name)
+      unless resource_type.valid_parameter?(name)
+        raise Puppet::DevError, _("%{name} is not a valid attribute for %{resource_type}") % { name: name, resource_type: resource_type.name }
+      end
       @options ||= {}
       @options[name] ||= {}
 
@@ -51,6 +57,7 @@ class Puppet::Provider::NameService < Puppet::Provider
     # List everything out by name.  Abstracted a bit so that it works
     # for both users and groups.
     def listbyname
+      Puppet.deprecation_warning(_("listbyname is deprecated and will be removed in a future release of Puppet. Please use `self.instances` to obtain a list of users."))
       names = []
       Puppet::Etc.send("set#{section()}ent")
       begin
@@ -110,7 +117,7 @@ class Puppet::Provider::NameService < Puppet::Provider
   end
 
   # Autogenerate a value.  Mostly used for uid/gid, but also used heavily
-  # with DirectoryServices, because DirectoryServices is stupid.
+  # with DirectoryServices
   def autogen(field)
     field = field.intern
     id_generators = {:user => :uid, :group => :gid}
@@ -136,7 +143,8 @@ class Puppet::Provider::NameService < Puppet::Provider
     when :user;   database = :passwd;  method = :uid
     when :group;  database = :group;   method = :gid
     else
-      raise Puppet::DevError, "Invalid resource name #{resource}"
+      #TRANSLATORS "autogen_id()" is a method name and should not be translated
+      raise Puppet::DevError, _("autogen_id() does not support auto generation of id for resource type %{resource_type}") % { resource_type: resource_type }
     end
 
     # Initialize from the data set, if needed.
@@ -166,7 +174,7 @@ class Puppet::Provider::NameService < Puppet::Provider
     begin
       execute(self.addcmd, {:failonfail => true, :combine => true, :custom_environment => @custom_environment})
       if feature?(:manages_password_age) && (cmd = passcmd)
-        execute(cmd)
+        execute(cmd, {:failonfail => true, :combine => true, :custom_environment => @custom_environment})
       end
     rescue Puppet::ExecutionFailure => detail
       raise Puppet::Error, _("Could not create %{resource} %{name}: %{detail}") % { resource: @resource.class.name, name: @resource.name, detail: detail }, detail.backtrace
@@ -181,7 +189,7 @@ class Puppet::Provider::NameService < Puppet::Provider
     end
 
     begin
-      execute(self.deletecmd)
+      execute(self.deletecmd, {:failonfail => true, :combine => true, :custom_environment => @custom_environment})
     rescue Puppet::ExecutionFailure => detail
       raise Puppet::Error, _("Could not delete %{resource} %{name}: %{detail}") % { resource: @resource.class.name, name: @resource.name, detail: detail }, detail.backtrace
     end
@@ -226,7 +234,7 @@ class Puppet::Provider::NameService < Puppet::Provider
     if @objectinfo.nil? or refresh == true
       @etcmethod ||= ("get" + self.class.section.to_s + "nam").intern
       begin
-        @objectinfo = Puppet::Etc.send(@etcmethod, @resource[:name])
+        @objectinfo = Puppet::Etc.send(@etcmethod, @canonical_name)
       rescue ArgumentError
         @objectinfo = nil
       end
@@ -258,7 +266,12 @@ class Puppet::Provider::NameService < Puppet::Provider
     # reading of the file.
     Puppet::Etc.endgrent
 
-    groups.join(",")
+    uniq_groups = groups.uniq
+    if groups != uniq_groups
+      debug("Removing any duplicate group entries")
+    end
+    # remove any double listed groups
+    uniq_groups.join(",")
   end
 
   # Convert the Etc struct into a hash.
@@ -276,14 +289,19 @@ class Puppet::Provider::NameService < Puppet::Provider
     super
     @custom_environment = {}
     @objectinfo = nil
+    if resource.is_a?(Hash) && !resource[:canonical_name].nil?
+      @canonical_name = resource[:canonical_name]
+    else
+      @canonical_name = resource[:name]
+    end
   end
 
   def set(param, value)
     self.class.validate(param, value)
     cmd = modifycmd(param, munge(param, value))
-    raise Puppet::DevError, "Nameservice command must be an array" unless cmd.is_a?(Array)
+    raise Puppet::DevError, _("Nameservice command must be an array") unless cmd.is_a?(Array)
     begin
-      execute(cmd)
+      execute(cmd, {:failonfail => true, :combine => true, :custom_environment => @custom_environment})
     rescue Puppet::ExecutionFailure => detail
       raise Puppet::Error, _("Could not set %{param} on %{resource}[%{name}]: %{detail}") % { param: param, resource: @resource.class.name, name: @resource.name, detail: detail }, detail.backtrace
     end

@@ -2,6 +2,10 @@ test_name "puppet module install (with version)"
 require 'puppet/acceptance/module_utils'
 extend Puppet::Acceptance::ModuleUtils
 
+tag 'audit:low',       # Install via pmt is not the primary support workflow
+    'audit:acceptance',
+    'audit:refactor'   # Wrap steps in blocks in accordance with Beaker style guide
+
 confine :except, :platform => /centos-4|el-4/ # PUP-5226
 
 module_author = "pmtacceptance"
@@ -14,6 +18,12 @@ teardown do
 end
 
 agents.each do |agent|
+
+  if on(agent, facter("fips_enabled")).stdout =~ /true/
+    puts "Module build, loading and installing not supported on fips enabled platforms"
+    next
+  end
+
   step 'setup'
   stub_forge_on(agent)
 

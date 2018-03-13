@@ -102,7 +102,7 @@ Puppet::Type.type(:package).provide :zypper, :parent => :rpm do
     options << '--name' unless major < 1 || @resource.allow_virtual? || should
     options << wanted
 
-    zypper *options
+    zypper(*options)
 
     unless self.query
       raise Puppet::ExecutionFailure.new(
@@ -126,7 +126,7 @@ Puppet::Type.type(:package).provide :zypper, :parent => :rpm do
 
   def uninstall
     #extract version numbers and convert to integers
-    major, minor, patch = zypper_version.scan(/\d+/).map{ |x| x.to_i }
+    major, minor, _ = zypper_version.scan(/\d+/).map{ |x| x.to_i }
 
     if major < 1
       super
@@ -137,8 +137,8 @@ Puppet::Type.type(:package).provide :zypper, :parent => :rpm do
       end
 
       options << @resource[:name]
-    	
-      zypper *options
+
+      zypper(*options)
     end
 
   end

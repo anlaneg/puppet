@@ -1,4 +1,4 @@
-# The Lexer is responsbile for turning source text into tokens.
+# The Lexer is responsible for turning source text into tokens.
 # This version is a performance enhanced lexer (in comparison to the 3.x and earlier "future parser" lexer.
 #
 # Old returns tokens [:KEY, value, { locator = }
@@ -179,7 +179,7 @@ class Lexer2
   # PERFORMANCE NOTE:
   # Comparison against a frozen string is faster (than unfrozen).
   #
-  STRING_BSLASH_BSLASH = '\\'.freeze
+  STRING_BSLASH_SLASH = '\/'.freeze
 
   attr_reader :locator
 
@@ -352,8 +352,10 @@ class Lexer2
           # regexp position is a regexp, else a div
           if regexp_acceptable? && value = scn.scan(PATTERN_REGEX)
             # Ensure an escaped / was not matched
-            while value[-2..-2] == STRING_BSLASH_BSLASH # i.e. \\
-              value += scn.scan_until(PATTERN_REGEX_END)
+            while escaped_end(value)
+              more = scn.scan_until(PATTERN_REGEX_END)
+              return emit(TOKEN_DIV, before) unless more
+              value << more
             end
             regex = value.sub(PATTERN_REGEX_A, '').sub(PATTERN_REGEX_Z, '').gsub(PATTERN_REGEX_ESC, '/')
             emit_completed([:REGEX, Regexp.new(regex), scn.pos-before], before)
@@ -511,7 +513,6 @@ class Lexer2
             scn.pos = before
             invalid_number = scn.peek(after - before) unless invalid_number
           end
-          length = scn.pos - before
           assert_numeric(invalid_number, before)
           scn.pos = before + 1
           lex_error(Issues::ILLEGAL_NUMBER, {:value => invalid_number})
@@ -521,12 +522,11 @@ class Lexer2
     ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm',
       'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z', '_'].each do |c|
       @selector[c] = lambda do
-
         scn = @scanner
         before = scn.pos
         value = scn.scan(PATTERN_BARE_WORD)
         if value && value =~ PATTERN_NAME
-          emit_completed(KEYWORDS[value] || [:NAME, value.freeze, scn.pos - before], before)
+          emit_completed(KEYWORDS[value] || @taskm_keywords[value] || [:NAME, value.freeze, scn.pos - before], before)
         elsif value
           emit_completed([:WORD, value.freeze, scn.pos - before], before)
         else
@@ -571,6 +571,21 @@ class Lexer2
     end
     @selector.each { |k,v| k.freeze }
     @selector.freeze
+  end
+
+  # Determine if last char of value is escaped by a backslash
+  def escaped_end(value)
+    escaped = false
+    if value.end_with?(STRING_BSLASH_SLASH)
+      value[1...-1].each_codepoint do |cp|
+        if cp == 0x5c # backslash
+          escaped = !escaped
+        else
+          escaped = false
+        end
+      end
+    end
+    escaped
   end
 
   # Clears the lexer state (it is not required to call this as it will be garbage collected
@@ -646,6 +661,8 @@ class Lexer2
       :after => nil,
       :line_lexical_start => 0
     }
+    # Use of --tasks introduces the new keyword 'plan'
+    @taskm_keywords = Puppet[:tasks] ? { 'plan' => [:PLAN, 'plan',  4] }.freeze : EMPTY_HASH
   end
 
   # Scans all of the content and returns it in an array

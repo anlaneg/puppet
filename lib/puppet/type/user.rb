@@ -279,6 +279,25 @@ module Puppet
       end
     end
 
+    newproperty(:password_warn_days, :required_features => :manages_password_age) do
+      desc "The number of days before a password is going to expire (see the maximum password age) during which the user should be warned."
+
+      munge do |value|
+        case value
+        when String
+          Integer(value)
+        else
+          value
+        end
+      end
+
+      validate do |value|
+        if value.to_s !~ /^-?\d+$/
+          raise ArgumentError, "Password warning days must be provided as a number."
+        end
+      end
+    end
+
     newproperty(:groups, :parent => Puppet::Property::List) do
       desc "The groups to which the user belongs.  The primary group should
         not be listed, and groups should be identified by name rather than by
@@ -367,9 +386,15 @@ module Puppet
     end
 
     newparam(:managehome, :boolean => true, :parent => Puppet::Parameter::Boolean) do
-      desc "Whether to manage the home directory when managing the user.
-        This will create the home directory when `ensure => present`, and
-        delete the home directory when `ensure => absent`. Defaults to `false`."
+      desc "Whether to manage the home directory when Puppet creates or removes the user.
+        This creates the home directory if Puppet also creates the user account, and deletes the
+        home directory if Puppet also removes the user account. Defaults to `false`.
+
+        This parameter has no effect unless Puppet is also creating or removing the user in the
+        resource at the same time. For instance, Puppet creates a home directory for a managed
+        user if `ensure => present` and the user does not exist at the time of the Puppet run.
+        If the home directory is then deleted manually, Puppet will not recreate it on the next
+        run."
 
       defaultto false
 
@@ -381,13 +406,12 @@ module Puppet
     end
 
     newproperty(:expiry, :required_features => :manages_expiry) do
-      desc "The expiry date for this user. Must be provided in
-           a zero-padded YYYY-MM-DD format --- e.g. 2010-02-19.
-           If you want to ensure the user account never expires,
-           you can pass the special value `absent`."
+      desc "The expiry date for this user. Provide as either the special
+           value `absent` to ensure that the account never expires, or as
+           a zero-padded YYYY-MM-DD format -- for example, 2010-02-19."
 
       newvalues :absent
-      newvalues /^\d{4}-\d{2}-\d{2}$/
+      newvalues(/^\d{4}-\d{2}-\d{2}$/)
 
       validate do |value|
         if value.intern != :absent and value !~ /^\d{4}-\d{2}-\d{2}$/
@@ -748,7 +772,7 @@ module Puppet
         # the name is stored in the 4th capture of the regex
         name = $4
         if name.empty?
-          key = $3.delete("\n")
+          $3.delete("\n")
           # If no comment is specified for this key, generate a unique internal
           # name. This uses the same rules as
           # provider/ssh_authorized_key/parsed (PUP-3357)

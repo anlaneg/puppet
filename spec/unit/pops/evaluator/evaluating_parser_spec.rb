@@ -56,7 +56,7 @@ describe 'Puppet::Pops::Evaluator::EvaluatorImpl' do
       "banana::split" => 'banana::split',
       "false"         => false,
       "true"          => true,
-      "Array"         => types.array_of_data(),
+      "Array"         => types.array_of_any,
       "/.*/"          => /.*/
     }.each do |source, result|
         it "should parse and evaluate the expression '#{source}' to #{result}" do
@@ -323,7 +323,7 @@ describe 'Puppet::Pops::Evaluator::EvaluatorImpl' do
                     'Array', 'Hash', 'CatalogEntry', 'Resource', 'Class', 'Undef', 'File' ],
 
       # Note, Data > Collection is false (so not included)
-      'Data'    => ['Scalar', 'Numeric', 'Integer', 'Float', 'Boolean', 'String', 'Pattern', 'Array', 'Hash',],
+      'Data'    => ['ScalarData', 'Numeric', 'Integer', 'Float', 'Boolean', 'String', 'Pattern', 'Array[Data]', 'Hash[String,Data]',],
       'Scalar' => ['Numeric', 'Integer', 'Float', 'Boolean', 'String', 'Pattern'],
       'Numeric' => ['Integer', 'Float'],
       'CatalogEntry' => ['Class', 'Resource', 'File'],
@@ -403,6 +403,11 @@ describe 'Puppet::Pops::Evaluator::EvaluatorImpl' do
     end
 
     context "on strings requiring boxing to Numeric" do
+      let(:logs) { [] }
+      let(:notices) { logs.select { |log| log.level == :notice }.map { |log| log.message } }
+      let(:warnings) { logs.select { |log| log.level == :warning }.map { |log| log.message } }
+      let(:debugs) { logs.select { |log| log.level == :debug }.map { |log| log.message } }
+
       {
         "'2' + '2'"       => 4,
         "'-2' + '2'"      => 0,
@@ -425,6 +430,35 @@ describe 'Puppet::Pops::Evaluator::EvaluatorImpl' do
             expect(parser.evaluate_string(scope, source, __FILE__)).to eq(result)
           end
         end
+
+      {
+        "'2' + 2"       => 2,
+        "'4' - 2"       => 4,
+        "'2' * 2"       => 2,
+        "'2' / 1"       => 2,
+        "'8' >> 1"      => 8,
+        "'4' << 1"      => 4,
+        "'10' % 3"      => 10,
+      }.each do |source, coerced_val|
+          it "should warn about numeric coercion in '#{source}' when strict = warning" do
+            Puppet[:strict] = :warning
+            collect_notices(source)
+            expect(warnings).to include(/The string '#{coerced_val}' was automatically coerced to the numerical value #{coerced_val}/)
+          end
+
+          it "should not warn about numeric coercion in '#{source}' if strict = off" do
+            Puppet[:strict] = :off
+            collect_notices(source)
+            expect(warnings).to_not include(/The string '#{coerced_val}' was automatically coerced to the numerical value #{coerced_val}/)
+          end
+
+        it "should error when finding numeric coercion in '#{source}' if strict = error" do
+          Puppet[:strict] = :error
+          expect { parser.evaluate_string(scope, source, __FILE__) }.to raise_error(
+            /The string '#{coerced_val}' was automatically coerced to the numerical value #{coerced_val}/
+            )
+        end
+      end
 
       {
         "'0888' + '010'"   => :error,
@@ -983,7 +1017,7 @@ describe 'Puppet::Pops::Evaluator::EvaluatorImpl' do
       end
 
     it "provides location information on error in unparenthesized call logic" do
-    expect{parser.evaluate_string(scope, "include non_existing_class", __FILE__)}.to raise_error(Puppet::ParseError, /:1:1/)
+    expect{parser.evaluate_string(scope, "include non_existing_class", __FILE__)}.to raise_error(Puppet::ParseError, /line: 1, column: 1/)
     end
 
     it 'defaults can be given in a lambda and used only when arg is missing' do
@@ -1112,7 +1146,6 @@ describe 'Puppet::Pops::Evaluator::EvaluatorImpl' do
       source = '"value is ${{a=>1,b=>2}} yo"'
       # This test requires testing against two options because a hash to string
       # produces a result that is unordered
-      hashstr = {'a' => 1, 'b' => 2}.to_s
       alt_results = ["value is {a => 1, b => 2} yo", "value is {b => 2, a => 1} yo" ]
       populate
       parse_result = parser.evaluate_string(scope, source, __FILE__)
@@ -1170,7 +1203,7 @@ describe 'Puppet::Pops::Evaluator::EvaluatorImpl' do
     end
 
     it "a lex error should be raised for '$foo::::bar'" do
-      expect { parser.evaluate_string(scope, "$foo::::bar") }.to raise_error(Puppet::ParseErrorWithIssue, /Illegal fully qualified name at line 1:7/)
+      expect { parser.evaluate_string(scope, "$foo::::bar") }.to raise_error(Puppet::ParseErrorWithIssue, /Illegal fully qualified name \(line: 1, column: 7\)/)
     end
 
     { '$a = $0'   => nil,
@@ -1249,6 +1282,15 @@ describe 'Puppet::Pops::Evaluator::EvaluatorImpl' do
       source = "File[a] <~ File[b]"
       parser.evaluate_string(scope, source, __FILE__)
       expect(scope.compiler).to have_relationship(['File', 'b', '~>', 'File', 'a'])
+    end
+
+    it 'should close the gap created by an intermediate empty set' do
+      source = "[File[a], File[aa]] -> [] ~> [File[b], File[bb]]"
+      parser.evaluate_string(scope, source, __FILE__)
+      expect(scope.compiler).to have_relationship(['File', 'a',  '~>', 'File', 'b'])
+      expect(scope.compiler).to have_relationship(['File', 'aa', '~>', 'File', 'b'])
+      expect(scope.compiler).to have_relationship(['File', 'a',  '~>', 'File', 'bb'])
+      expect(scope.compiler).to have_relationship(['File', 'aa', '~>', 'File', 'bb'])
     end
   end
 
@@ -1351,7 +1393,7 @@ describe 'Puppet::Pops::Evaluator::EvaluatorImpl' do
       source = "\nimport foo"
       # Error references position 5 at the opening '{'
       # Set file to nil to make it easier to match with line number (no file name in output)
-      expect { parser.evaluate_string(scope, source) }.to raise_error(/'import' has been discontinued.*line 2:1/)
+      expect { parser.evaluate_string(scope, source) }.to raise_error(/'import' has been discontinued.* \(line: 2, column: 1\)/)
     end
   end
 
@@ -1361,15 +1403,15 @@ describe 'Puppet::Pops::Evaluator::EvaluatorImpl' do
       # Error references position 5 at the opening '{'
       # Set file to nil to make it easier to match with line number (no file name in output)
       expect { parser.evaluate_string(scope, source) }.to raise_error(
-        /Illegal Resource Type expression, expected result to be a type name, or untitled Resource.*line 1:2/)
+        /Illegal Resource Type expression, expected result to be a type name, or untitled Resource.* \(line: 1, column: 2\)/)
     end
 
     it 'for non r-value producing <| |>' do
-      expect { parser.parse_string("$a = File <| |>", nil) }.to raise_error(/A Virtual Query does not produce a value at line 1:6/)
+      expect { parser.parse_string("$a = File <| |>", nil) }.to raise_error(/A Virtual Query does not produce a value \(line: 1, column: 6\)/)
     end
 
     it 'for non r-value producing <<| |>>' do
-      expect { parser.parse_string("$a = File <<| |>>", nil) }.to raise_error(/An Exported Query does not produce a value at line 1:6/)
+      expect { parser.parse_string("$a = File <<| |>>", nil) }.to raise_error(/An Exported Query does not produce a value \(line: 1, column: 6\)/)
     end
 
     it 'for non r-value producing define' do
@@ -1390,7 +1432,7 @@ describe 'Puppet::Pops::Evaluator::EvaluatorImpl' do
       yyy
       SOURCE
       # first char after opening " reported as being in error.
-      expect { parser.parse_string(source) }.to raise_error(/Unclosed quote after '"' followed by 'xx\\nyy\.\.\.' at line 1:7/)
+      expect { parser.parse_string(source) }.to raise_error(/Unclosed quote after '"' followed by 'xx\\nyy\.\.\.' \(line: 1, column: 7\)/)
     end
 
     it 'for multiple errors with a summary exception' do
@@ -1402,7 +1444,7 @@ describe 'Puppet::Pops::Evaluator::EvaluatorImpl' do
     it 'for a bad hostname' do
       expect {
         parser.parse_string("node 'macbook+owned+by+name' { }", nil)
-      }.to raise_error(/The hostname 'macbook\+owned\+by\+name' contains illegal characters.*at line 1:6/)
+      }.to raise_error(/The hostname 'macbook\+owned\+by\+name' contains illegal characters.* \(line: 1, column: 6\)/)
     end
 
     it 'for a hostname with interpolation' do
@@ -1412,7 +1454,7 @@ describe 'Puppet::Pops::Evaluator::EvaluatorImpl' do
       SOURCE
       expect {
         parser.parse_string(source, nil)
-      }.to raise_error(/An interpolated expression is not allowed in a hostname of a node at line 2:23/)
+      }.to raise_error(/An interpolated expression is not allowed in a hostname of a node \(line: 2, column: 23\)/)
     end
 
   end
@@ -1451,8 +1493,6 @@ describe 'Puppet::Pops::Evaluator::EvaluatorImpl' do
   end
 
   matcher :have_relationship do |expected|
-    calc = Puppet::Pops::Types::TypeCalculator.new
-
     match do |compiler|
       op_name = {'->' => :relationship, '~>' => :subscription}
       compiler.relationships.any? do | relation |
@@ -1466,6 +1506,12 @@ describe 'Puppet::Pops::Evaluator::EvaluatorImpl' do
 
     failure_message do |actual|
       "Relationship #{expected[0]}[#{expected[1]}] #{expected[2]} #{expected[3]}[#{expected[4]}] but was unknown to compiler"
+    end
+  end
+
+  def collect_notices(code)
+    Puppet::Util::Log.with_destination(Puppet::Test::LogCollector.new(logs)) do
+      parser.evaluate_string(scope, code, __FILE__)
     end
   end
 

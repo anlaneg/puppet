@@ -25,7 +25,6 @@ describe provider_class do
 
   describe "when installing" do
     it "should install a package" do
-      @resource.stubs(:should).with(:ensure).returns(:installed)
       @provider.expects(:installp).with('-acgwXY', '-d', 'mysource', 'mypackage')
       @provider.install
     end
@@ -98,10 +97,36 @@ mypackage                 1.2.3.3         Already superseded by 1.2.3.4
       @provider.stubs(:latest_info).returns( { :version => "1.2.3.5" } )
       expect(@provider.latest).to eq("1.2.3.5")
     end
+
+    it "should prefetch the right values" do
+      Process.stubs(:euid).returns(0)
+      resource = Puppet::Type.type(:package).
+          new(:name => 'sudo.rte', :ensure => :latest,
+              :source => 'mysource', :provider => :aix)
+
+      resource.stubs(:should).with(:ensure).returns(:latest)
+      resource.should(:ensure)
+
+      resource.provider.class.stubs(:execute).returns(<<-END.chomp)
+sudo:sudo.rte:1.7.10.4::I:C:::::N:Configurable super-user privileges runtime::::0::
+sudo:sudo.rte:1.8.6.4::I:T:::::N:Configurable super-user privileges runtime::::0::
+END
+
+      resource.provider.class.prefetch('sudo.rte' => resource)
+      expect(resource.provider.latest).to eq('1.8.6.4')
+    end
   end
 
   it "update should install a package" do
     @provider.expects(:install).with(false)
     @provider.update
+  end
+
+  it "should prefetch when some packages lack sources" do
+    latest = Puppet::Type.type(:package).new(:name => 'mypackage', :ensure => :latest, :source => 'mysource', :provider => :aix)
+    absent = Puppet::Type.type(:package).new(:name => 'otherpackage', :ensure => :absent, :provider => :aix)
+    Process.stubs(:euid).returns(0)
+    provider_class.expects(:execute).returns 'mypackage:mypackage.rte:1.8.6.4::I:T:::::N:A Super Cool Package::::0::\n'
+    provider_class.prefetch({ 'mypackage' => latest, 'otherpackage' => absent })
   end
 end

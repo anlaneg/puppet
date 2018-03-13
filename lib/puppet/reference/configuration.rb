@@ -32,8 +32,10 @@ config = Puppet::Util::Reference.newreference(:configuration, :depth => 1, :doc 
       val = 'Unix/Linux: /var/run/puppetlabs -- Windows: C:\ProgramData\PuppetLabs\puppet\var\run -- Non-root user: ~/.puppetlabs/var/run'
     elsif name.to_s == 'logdir'
       val = 'Unix/Linux: /var/log/puppetlabs/puppet -- Windows: C:\ProgramData\PuppetLabs\puppet\var\log -- Non-root user: ~/.puppetlabs/var/log'
-    elsif name.to_s == 'hiera.yaml'
+    elsif name.to_s == 'hiera_config'
       val = '$confdir/hiera.yaml. However, if a file exists at $codedir/hiera.yaml, Puppet uses that instead.'
+    elsif name.to_s == 'certname'
+      val = "the Host's fully qualified domain name, as determined by facter"
     end
 
     # Leave out the section information; it was apparently confusing people.
@@ -48,7 +50,7 @@ config = Puppet::Util::Reference.newreference(:configuration, :depth => 1, :doc 
 end
 
 config.header = <<EOT
-## Configuration Settings
+## Configuration settings
 
 * Each of these settings can be specified in `puppet.conf` or on the
   command line.
@@ -67,6 +69,8 @@ config.header = <<EOT
   combined with other units, and defaults to seconds when omitted. Examples are
   '3600' which is equivalent to '1h' (one hour), and '1825d' which is equivalent
   to '5y' (5 years).
+* If you use the `splay` setting, note that the period that it waits changes
+  each time the Puppet agent is restarted.
 * Settings that take a single file or directory can optionally set the owner,
   group, and mode for their value: `rundir = $vardir/run { owner = puppet,
   group = puppet, mode = 644 }`
@@ -75,7 +79,7 @@ config.header = <<EOT
 
 See the [configuration guide][confguide] for more details.
 
-[confguide]: http://docs.puppetlabs.com/puppet/latest/reference/config_about_settings.html
+[confguide]: https://puppet.com/docs/puppet/latest/config_about_settings.html
 
 * * *
 

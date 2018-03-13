@@ -211,7 +211,7 @@ DOC
     raise Puppet::Error, _("No private key with which to validate certificate with fingerprint: %{fingerprint}") % { fingerprint: certificate.fingerprint } unless key
     unless certificate.content.check_private_key(key.content)
       raise Puppet::Error, _(<<ERROR_STRING) % { fingerprint: certificate.fingerprint, cert_name: Puppet[:certname], ssl_dir: Puppet[:ssldir], cert_dir: Puppet[:certdir].gsub('/', '\\') }
-The certificate retrieved from the master does not match the agent's private key.
+The certificate retrieved from the master does not match the agent's private key. Did you forget to run as root?
 Certificate fingerprint: %{fingerprint}
 To fix this, remove the certificate from both the master and the agent and then start a puppet run, which will automatically regenerate a certificate.
 On the master:
@@ -274,34 +274,20 @@ ERROR_STRING
   # Create/return a store that uses our SSL info to validate
   # connections.
   def ssl_store(purpose = OpenSSL::X509::PURPOSE_ANY)
-    unless @ssl_store
-      @ssl_store = OpenSSL::X509::Store.new
-      @ssl_store.purpose = purpose
-
-      # Use the file path here, because we don't want to cause
-      # a lookup in the middle of setting our ssl connection.
-      @ssl_store.add_file(Puppet[:localcacert])
-
-      # If we're doing revocation and there's a CRL, add it to our store.
-      if Puppet.settings[:certificate_revocation]
-        if crl = Puppet::SSL::CertificateRevocationList.indirection.find(CA_NAME)
-          @ssl_store.flags = OpenSSL::X509::V_FLAG_CRL_CHECK_ALL|OpenSSL::X509::V_FLAG_CRL_CHECK
-          @ssl_store.add_crl(crl.content)
-        end
-      end
-      return @ssl_store
+    if @ssl_store.nil?
+      @ssl_store = build_ssl_store(purpose)
     end
     @ssl_store
   end
 
   def to_data_hash
     my_cert = Puppet::SSL::Certificate.indirection.find(name)
-    result = { :name  => name }
+    result = { 'name'  => name }
 
     my_state = state
 
-    result[:state] = my_state
-    result[:desired_state] = desired_state if desired_state
+    result['state'] = my_state
+    result['desired_state'] = desired_state if desired_state
 
     thing_to_use = (my_state == 'requested') ? certificate_request : my_cert
 
@@ -310,7 +296,7 @@ ERROR_STRING
     # json[:fingerprints][:default]
     # It appears that we have no internal consumers of this api
     # --jeffweiss 30 aug 2012
-    result[:fingerprint] = thing_to_use.fingerprint
+    result['fingerprint'] = thing_to_use.fingerprint
 
     # The above fingerprint doesn't tell us what message digest algorithm was used
     # No problem, except that the default is changing between 2.7 and 3.0. Also, as
@@ -319,13 +305,13 @@ ERROR_STRING
     # So, when we add the newer fingerprints, we're explicit about the hashing
     # algorithm used.
     # --jeffweiss 31 july 2012
-    result[:fingerprints] = {}
-    result[:fingerprints][:default] = thing_to_use.fingerprint
+    result['fingerprints'] = {}
+    result['fingerprints']['default'] = thing_to_use.fingerprint
 
     suitable_message_digest_algorithms.each do |md|
-      result[:fingerprints][md] = thing_to_use.fingerprint md
+      result['fingerprints'][md.to_s] = thing_to_use.fingerprint md
     end
-    result[:dns_alt_names] = thing_to_use.subject_alt_names
+    result['dns_alt_names'] = thing_to_use.subject_alt_names
 
     result
   end
@@ -334,7 +320,7 @@ ERROR_STRING
   # configurable
   # --jeffweiss 29 aug 2012
   def suitable_message_digest_algorithms
-    [:SHA1, :SHA256, :SHA512]
+    [:SHA1, :SHA224, :SHA256, :SHA384, :SHA512]
   end
 
   # Attempt to retrieve a cert, if we don't already have one.
@@ -381,6 +367,33 @@ ERROR_STRING
     rescue Puppet::SSL::CertificateAuthority::CertificateVerificationError
       return 'revoked'
     end
+  end
+
+  private
+
+  def build_ssl_store(purpose)
+    store = OpenSSL::X509::Store.new
+    store.purpose = purpose
+
+    # Use the file path here, because we don't want to cause
+    # a lookup in the middle of setting our ssl connection.
+    store.add_file(Puppet[:localcacert])
+
+    # If we're doing revocation and there's a CRL, add it to our store.
+    if Puppet.lookup(:certificate_revocation)
+      if crl = Puppet::SSL::CertificateRevocationList.indirection.find(CA_NAME)
+        flags = OpenSSL::X509::V_FLAG_CRL_CHECK
+        if Puppet.lookup(:certificate_revocation) == :chain
+          flags |= OpenSSL::X509::V_FLAG_CRL_CHECK_ALL
+        end
+
+        store.flags = flags
+        store.add_crl(crl.content)
+      else
+        Puppet.debug _("Certificate revocation checking is enabled but a CRL cannot be found; CRL checking will not be performed.")
+      end
+    end
+    store
   end
 end
 

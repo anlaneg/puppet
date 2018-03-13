@@ -1,5 +1,11 @@
 test_name "should update an entry for an SSH authorized key"
 
+tag 'audit:medium',
+    'audit:refactor',  # Use block style `test_run`
+    'audit:acceptance' # Could be done at the integration (or unit) layer though
+                       # actual changing of resources could irreparably damage a
+                       # host running this, or require special permissions.
+
 confine :except, :platform => ['windows']
 
 auth_keys = '~/.ssh/authorized_keys'
@@ -17,11 +23,12 @@ agents.each do |agent|
 
   step "(setup) create an authorized key in the #{auth_keys} file"
   on(agent, "echo '' >> #{auth_keys} && echo 'ssh-rsa mykey #{name}' >> #{auth_keys}")
+  on(agent, "chown $LOGNAME #{auth_keys}")
 
   #------- TESTS -------#
   step "update an authorized key entry with puppet (present)"
   args = ['ensure=present',
-          "user='root'",
+          "user=$LOGNAME",
           "type='rsa'",
           "key='mynewshinykey'",
          ]

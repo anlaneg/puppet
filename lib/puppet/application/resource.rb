@@ -28,10 +28,14 @@ class Puppet::Application::Resource < Puppet::Application
     @extra_params << arg.to_sym
   end
 
-  def help
-    <<-'HELP'
+  def summary
+    _("The resource abstraction layer shell")
+  end
 
-puppet-resource(8) -- The resource abstraction layer shell
+  def help
+    <<-HELP
+
+puppet-resource(8) -- #{summary}
 ========
 
 SYNOPSIS
@@ -123,7 +127,7 @@ Luke Kanies
 
 COPYRIGHT
 ---------
-Copyright (c) 2011 Puppet Labs, LLC Licensed under the Apache 2.0 License
+Copyright (c) 2011 Puppet Inc., LLC Licensed under the Apache 2.0 License
 
     HELP
   end
@@ -137,16 +141,16 @@ Copyright (c) 2011 Puppet Labs, LLC Licensed under the Apache 2.0 License
 
       resources = find_or_save_resources(type, name, params)
 
-      if options[:to_yaml]
-        text = resources.
-          map { |resource| resource.prune_parameters(:parameters_to_include => @extra_params).to_hierayaml }.
-          join("\n")
-        text.prepend("#{type.downcase}:\n")
-      else
-        text = resources.
-          map { |resource| resource.prune_parameters(:parameters_to_include => @extra_params).to_manifest }.
-          join("\n")
-      end
+    if options[:to_yaml]
+      text = resources.map do |resource|
+        resource.prune_parameters(:parameters_to_include => @extra_params).to_hierayaml.force_encoding(Encoding.default_external)
+      end.join("\n")
+      text.prepend("#{type.downcase}:\n")
+    else
+      text = resources.map do |resource|
+        resource.prune_parameters(:parameters_to_include => @extra_params).to_manifest.force_encoding(Encoding.default_external)
+      end.join("\n")
+    end
 
       options[:edit] ?
         handle_editing(text) :

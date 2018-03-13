@@ -24,7 +24,8 @@ module Puppet::Pops
       if merge.is_a?(Hash)
         merge_strategy = merge['strategy']
         if merge_strategy.nil?
-          raise ArgumentError, "The hash given as 'merge' must contain the name of a strategy in string form for the key 'strategy'"
+          #TRANSLATORS 'merge' is a variable name and 'strategy' is a key and should not be translated
+          raise ArgumentError, _("The hash given as 'merge' must contain the name of a strategy in string form for the key 'strategy'")
         end
         merge_options  = merge.size == 1 ? EMPTY_HASH : merge
       else
@@ -33,7 +34,7 @@ module Puppet::Pops
       end
       merge_strategy = merge_strategy.to_sym if merge_strategy.is_a?(String)
       strategy_class = strategies[merge_strategy]
-      raise ArgumentError, "Unknown merge strategy: '#{merge_strategy}'" if strategy_class.nil?
+      raise ArgumentError, _("Unknown merge strategy: '%{strategy}'") % { strategy: merge_strategy } if strategy_class.nil?
       merge_options == EMPTY_HASH ? strategy_class::INSTANCE : strategy_class.new(merge_options)
     end
 
@@ -51,7 +52,9 @@ module Puppet::Pops
     #
     def self.add_strategy(strategy_class)
       unless MergeStrategy > strategy_class
-        raise ArgumentError, "MergeStrategies.add_strategy 'strategy_class' must be a 'MergeStrategy' class. Got #{strategy_class}"
+        #TRANSLATORS 'MergeStrategies.add_strategy' is a method, 'stratgey_class' is a variable and 'MergeStrategy' is a class name and should not be translated
+        raise ArgumentError, _("MergeStrategies.add_strategy 'strategy_class' must be a 'MergeStrategy' class. Got %{strategy_class}") %
+            { strategy_class: strategy_class }
       end
       strategies[strategy_class.key] = strategy_class
       nil
@@ -120,7 +123,7 @@ module Puppet::Pops
       when 0
         throw :no_such_key
       when 1
-        yield(lookup_variants[0])
+        merge_single(yield(lookup_variants[0]))
       else
         lookup_invocation.with(:merge, self) do
           result = lookup_variants.reduce(NOT_FOUND) do |memo, lookup_variant|
@@ -146,6 +149,13 @@ module Puppet::Pops
     # @param value [Object] the value to convert
     # @return [Object] the converted value
     def convert_value(value)
+      value
+    end
+
+    # Applies the merge strategy on a single element. Only applicable for `unique`
+    # @param value [Object] the value to merge with nothing
+    # @return [Object] the merged value
+    def merge_single(value)
       value
     end
 
@@ -282,6 +292,14 @@ module Puppet::Pops
       e.is_a?(Array) ? e.flatten : [e]
     end
 
+    # If _value_ is an array, then return the result of calling `uniq` on that array. Otherwise,
+    # the argument is returned.
+    # @param value [Object] the value to merge with nothing
+    # @return [Object] the merged value
+    def merge_single(value)
+      value.is_a?(Array) ? value.uniq : value
+    end
+
     protected
 
     def value_t
@@ -375,7 +393,7 @@ module Puppet::Pops
           'knockout_prefix=>Optional[String],'\
           'merge_debug=>Optional[Boolean],'\
           'merge_hash_arrays=>Optional[Boolean],'\
-          'sort_merge_arrays=>Optional[Boolean],'\
+          'sort_merged_arrays=>Optional[Boolean],'\
           '}]')
     end
 

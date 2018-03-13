@@ -50,7 +50,7 @@ describe Puppet::Transaction do
     expect(transaction.report.resource_statuses[resource.to_s]).to equal(status)
   end
 
-  it "should not consider there to be failed resources if no statuses are marked failed" do
+  it "should not consider there to be failed or failed_to_restart resources if no statuses are marked failed" do
     resource = Puppet::Type.type(:notify).new :title => "foobar"
     transaction = transaction_with_resource(resource)
     transaction.evaluate
@@ -59,7 +59,7 @@ describe Puppet::Transaction do
   end
 
   it "should use the provided report object" do
-    report = Puppet::Transaction::Report.new("apply")
+    report = Puppet::Transaction::Report.new
     transaction = Puppet::Transaction.new(Puppet::Resource::Catalog.new, report, nil)
 
     expect(transaction.report).to eq(report)
@@ -86,12 +86,12 @@ describe Puppet::Transaction do
 
     it "should set retrieval time on the report" do
       catalog = Puppet::Resource::Catalog.new
-      report = Puppet::Transaction::Report.new("apply")
+      report = Puppet::Transaction::Report.new
       catalog.retrieval_duration = 5
 
       report.expects(:add_times).with(:config_retrieval, 5)
 
-      transaction = Puppet::Transaction.new(catalog, report, nil)
+      Puppet::Transaction.new(catalog, report, nil)
     end
   end
 
@@ -133,6 +133,32 @@ describe Puppet::Transaction do
     end
   end
 
+  describe "when evaluating a skipped resource for corrective change it" do
+    before :each do
+      # Enable persistence during tests
+      Puppet::Transaction::Persistence.any_instance.stubs(:enabled?).returns(true)
+    end
+
+    it "should persist in the transactionstore" do
+      Puppet[:transactionstorefile] = tmpfile('persistence_test')
+
+      resource = Puppet::Type.type(:notify).new :title => "foobar"
+      transaction = transaction_with_resource(resource)
+      transaction.evaluate
+      expect(transaction.resource_status(resource)).to be_changed
+
+      transaction = transaction_with_resource(resource)
+      transaction.expects(:skip?).with(resource).returns true
+      transaction.event_manager.expects(:process_events).with(resource).never
+      transaction.evaluate
+      expect(transaction.resource_status(resource)).to be_skipped
+
+      persistence = Puppet::Transaction::Persistence.new
+      persistence.load
+      expect(persistence.get_system_value(resource.ref, "message")).to eq(["foobar"])
+    end
+  end
+
   describe "when applying a resource" do
     before do
       @catalog = Puppet::Resource::Catalog.new
@@ -171,6 +197,13 @@ describe Puppet::Transaction do
     it "should report any_failed if any resources failed" do
       @resource.expects(:properties).raises ArgumentError
       @transaction.evaluate
+
+      expect(@transaction).to be_any_failed
+    end
+
+    it "should report any_failed if any resources failed to restart" do
+      @transaction.evaluate
+      @transaction.report.resource_statuses[@resource.to_s].failed_to_restart = true
 
       expect(@transaction).to be_any_failed
     end
@@ -330,7 +363,7 @@ describe Puppet::Transaction do
   describe "after resource traversal" do
     let(:catalog) { Puppet::Resource::Catalog.new }
     let(:prioritizer) { Puppet::Graph::RandomPrioritizer.new }
-    let(:report) { Puppet::Transaction::Report.new("apply") }
+    let(:report) { Puppet::Transaction::Report.new }
     let(:transaction) { Puppet::Transaction.new(catalog, report, prioritizer) }
     let(:generator) { Puppet::Transaction::AdditionalResourceGenerator.new(catalog, nil, prioritizer) }
 
@@ -557,6 +590,98 @@ describe Puppet::Transaction do
 
       transaction.prefetch_if_necessary(resource)
     end
+
+    it "should not prefetch a provider which has failed" do
+      transaction.prefetch_failed_providers[:sshkey][:parsed] = true
+
+      resource.provider.class.expects(:prefetch).never
+
+      transaction.prefetch_if_necessary(resource)
+    end
+
+    describe "and prefetching fails" do
+      before :each do
+        resource.provider.class.expects(:prefetch).raises(Puppet::Error, "message")
+      end
+
+      context "without future_features flag" do
+        before :each do
+          Puppet.settings[:future_features] = false
+        end
+
+        it "should not rescue prefetch executions" do
+          expect { transaction.prefetch_if_necessary(resource) }.to raise_error(Puppet::Error)
+        end
+      end
+
+      context "with future_features flag" do
+        before :each do
+          Puppet.settings[:future_features] = true
+        end
+
+        it "should rescue prefetch executions" do
+          transaction.prefetch_if_necessary(resource)
+
+          expect(transaction.prefetched_providers[:sshkey][:parsed]).to be_truthy
+        end
+
+        it "should mark resources as failed" do
+          transaction.evaluate
+
+          expect(transaction.resource_status(resource).failed?).to be_truthy
+        end
+
+        it "should mark a provider that has failed prefetch" do
+          transaction.prefetch_if_necessary(resource)
+
+          expect(transaction.prefetch_failed_providers[:sshkey][:parsed]).to be_truthy
+        end
+
+        describe "and new resources are generated" do
+          let(:generator) { Puppet::Type.type(:notify).new :title => "generator" }
+          let(:generated) do
+            %w[a b c].map { |name| Puppet::Type.type(:sshkey).new :title => "foo", :name => name, :type => :dsa, :key => "eh", :provider => :parsed }
+          end
+
+          before :each do
+            catalog.add_resource generator
+            generator.stubs(:generate).returns generated
+            catalog.stubs(:container_of).returns generator
+          end
+
+          it "should not evaluate resources with a failed provider, even if the prefetch is rescued" do
+            #Only the generator resource should be applied, all the other resources are failed, and skipped.
+            catalog.remove_resource resource2
+            transaction.expects(:apply).once
+
+            transaction.evaluate
+          end
+
+          it "should not fail other resources added after the failing resource" do
+            new_resource = Puppet::Type.type(:notify).new :name => "baz"
+            catalog.add_resource(new_resource)
+
+            transaction.evaluate
+
+            expect(transaction.resource_status(new_resource).failed?).to be_falsey
+          end
+
+          it "should fail other resources that require the failing resource" do
+            new_resource = Puppet::Type.type(:notify).new(:name => "baz", :require => resource)
+            catalog.add_resource(new_resource)
+
+            catalog.remove_resource resource2
+            transaction.expects(:apply).once
+
+            transaction.evaluate
+
+            expect(transaction.resource_status(resource).failed?).to be_truthy
+            expect(transaction.resource_status(new_resource).dependency_failed?).to be_truthy
+            expect(transaction.skip?(new_resource)).to be_truthy
+          end
+        end
+      end
+    end
   end
 
   describe "during teardown" do
@@ -675,23 +800,26 @@ describe Puppet::Transaction do
   end
 
   it "errors with a dependency cycle for a resource that requires itself" do
+    Puppet.expects(:err).with(regexp_matches(/Found 1 dependency cycle:.*\(Notify\[cycle\] => Notify\[cycle\]\)/m))
     expect do
       apply_compiled_manifest(<<-MANIFEST)
         notify { cycle: require => Notify[cycle] }
       MANIFEST
-    end.to raise_error(Puppet::Error, /Found 1 dependency cycle:.*\(Notify\[cycle\] => Notify\[cycle\]\)/m)
+    end.to raise_error(Puppet::Error, 'One or more resource dependency cycles detected in graph')
   end
 
   it "errors with a dependency cycle for a self-requiring resource also required by another resource" do
+    Puppet.expects(:err).with(regexp_matches(/Found 1 dependency cycle:.*\(Notify\[cycle\] => Notify\[cycle\]\)/m))
     expect do
       apply_compiled_manifest(<<-MANIFEST)
         notify { cycle: require => Notify[cycle] }
         notify { other: require => Notify[cycle] }
       MANIFEST
-    end.to raise_error(Puppet::Error, /Found 1 dependency cycle:.*\(Notify\[cycle\] => Notify\[cycle\]\)/m)
+    end.to raise_error(Puppet::Error, 'One or more resource dependency cycles detected in graph')
   end
 
   it "errors with a dependency cycle for a resource that requires itself and another resource" do
+    Puppet.expects(:err).with(regexp_matches(/Found 1 dependency cycle:.*\(Notify\[cycle\] => Notify\[cycle\]\)/m))
     expect do
       apply_compiled_manifest(<<-MANIFEST)
         notify { cycle:
@@ -699,10 +827,11 @@ describe Puppet::Transaction do
         }
         notify { other: }
       MANIFEST
-    end.to raise_error(Puppet::Error, /Found 1 dependency cycle:.*\(Notify\[cycle\] => Notify\[cycle\]\)/m)
+    end.to raise_error(Puppet::Error, 'One or more resource dependency cycles detected in graph')
   end
 
   it "errors with a dependency cycle for a resource that is later modified to require itself" do
+    Puppet.expects(:err).with(regexp_matches(/Found 1 dependency cycle:.*\(Notify\[cycle\] => Notify\[cycle\]\)/m))
     expect do
       apply_compiled_manifest(<<-MANIFEST)
         notify { cycle: }
@@ -710,7 +839,41 @@ describe Puppet::Transaction do
           require => Notify[cycle]
         }
       MANIFEST
-    end.to raise_error(Puppet::Error, /Found 1 dependency cycle:.*\(Notify\[cycle\] => Notify\[cycle\]\)/m)
+    end.to raise_error(Puppet::Error, 'One or more resource dependency cycles detected in graph')
+  end
+
+  context "when generating a report for a transaction with a dependency cycle" do
+    let(:catalog) do
+      compile_to_ral(<<-MANIFEST)
+        notify { foo: require => Notify[bar] }
+        notify { bar: require => Notify[foo] }
+      MANIFEST
+    end
+
+    let(:prioritizer) { Puppet::Graph::SequentialPrioritizer.new }
+    let(:transaction) { Puppet::Transaction.new(catalog,
+                                          Puppet::Transaction::Report.new("apply"),
+                                          prioritizer) }
+
+    before(:each) do
+      expect { transaction.evaluate }.to raise_error(Puppet::Error)
+      transaction.report.finalize_report
+    end
+
+    it "should report resources involved in a dependency cycle as failed" do
+      expect(transaction.report.resource_statuses['Notify[foo]']).to be_failed
+      expect(transaction.report.resource_statuses['Notify[bar]']).to be_failed
+    end
+
+    it "should generate a failure event for a resource in a dependency cycle" do
+      status = transaction.report.resource_statuses['Notify[foo]']
+      expect(status.events.first.status).to eq('failure')
+      expect(status.events.first.message).to eq('resource is part of a dependency cycle')
+    end
+
+    it "should report that the transaction is failed" do
+      expect(transaction.report.status).to eq('failed')
+    end
   end
 
   it "reports a changed resource with a successful run" do

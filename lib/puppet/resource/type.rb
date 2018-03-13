@@ -5,11 +5,6 @@ require 'puppet/parser/ast/leaf'
 
 # Puppet::Resource::Type represents nodes, classes and defined types.
 #
-# It has a standard format for external consumption, usable from the
-# resource_type indirection via rest and the resource_type face. See the
-# {file:api_docs/http_resource_type.md#Schema resource type schema
-# description}.
-#
 # @api public
 class Puppet::Resource::Type
   Puppet::ResourceType = self
@@ -48,7 +43,7 @@ class Puppet::Resource::Type
   #   :capability  - the type name of the capres produced/consumed
   #   :mappings    - a hash of attribute_name => Expression
   # These two attributes are populated in
-  # PopsBridge::instantiate_CapabilityMaping
+  # PopsBridge::instantiate_CapabilityMapping
 
   # Map from argument (aka parameter) names to Puppet Type
   # @return [Hash<Symbol, Puppet::Pops::Types::PAnyType] map from name to type
@@ -62,49 +57,6 @@ class Puppet::Resource::Type
 
   RESOURCE_KINDS.each do |t|
     define_method("#{t}?") { self.type == t }
-  end
-
-  require 'puppet/indirector'
-  extend Puppet::Indirector
-  indirects :resource_type, :terminus_class => :parser
-
-  def self.from_data_hash(data)
-    name = data.delete(NAME) or raise ArgumentError, 'Resource Type names must be specified'
-    kind = data.delete(KIND) || 'definition'
-
-    unless type = RESOURCE_EXTERNAL_NAMES_TO_KINDS[kind]
-      raise ArgumentError, "Unsupported resource kind '#{kind}'"
-    end
-
-    data = data.inject({}) { |result, ary| result[ary[0].intern] = ary[1]; result }
-
-    # External documentation uses "parameters" but the internal name
-    # is "arguments"
-    data[:arguments] = data.delete(:parameters)
-
-    new(type, name, data)
-  end
-
-  def to_data_hash
-    data = [:doc, :line, :file, :parent].inject({}) do |hash, param|
-      next hash unless (value = self.send(param)) and (value != "")
-      hash[param.to_s] = value
-      hash
-    end
-
-    # External documentation uses "parameters" but the internal name
-    # is "arguments"
-    # Dump any arguments as source
-    data[PARAMETERS] = Hash[arguments.map do |k,v|
-                                [k, v.respond_to?(:source_text) ? v.source_text : v]
-                              end]
-    data[NAME] = name
-
-    unless RESOURCE_KINDS_TO_EXTERNAL_NAMES.has_key?(type)
-      raise ArgumentError, "Unsupported resource kind '#{type}'"
-    end
-    data[KIND] = RESOURCE_KINDS_TO_EXTERNAL_NAMES[type]
-    data
   end
 
   # Are we a child of the passed class?  Do a recursive search up our
@@ -165,7 +117,7 @@ class Puppet::Resource::Type
     static_parent = evaluate_parent_type(resource)
     scope = static_parent || resource.scope
 
-    scope = scope.newscope(:namespace => namespace, :source => self, :resource => resource) unless resource.title == :main
+    scope = scope.newscope(:source => self, :resource => resource) unless resource.title == :main
     scope.compiler.add_class(name) unless definition?
 
     set_resource_parameters(resource, scope)
@@ -188,7 +140,7 @@ class Puppet::Resource::Type
 
   def initialize(type, name, options = {})
     @type = type.to_s.downcase.to_sym
-    raise ArgumentError, "Invalid resource supertype '#{type}'" unless RESOURCE_KINDS.include?(@type)
+    raise ArgumentError, _("Invalid resource supertype '%{type}'") % { type: type } unless RESOURCE_KINDS.include?(@type)
 
     name = convert_from_ast(name) if name.is_a?(Puppet::Parser::AST::HostName)
 
@@ -271,7 +223,7 @@ class Puppet::Resource::Type
     resource_type =
     case type
     when :definition
-      raise ArgumentError, 'Cannot create resources for defined resource types'
+      raise ArgumentError, _('Cannot create resources for defined resource types')
     when :hostclass
       :class
     when :node
@@ -306,7 +258,7 @@ class Puppet::Resource::Type
     end
 
     if ['Class', 'Node'].include? resource.type
-      scope.catalog.tag(*resource.tags)
+      scope.catalog.merge_tags_from(resource)
     end
   end
 
@@ -468,10 +420,10 @@ class Puppet::Resource::Type
     name_to_type_hash.each do |name, t|
       # catch internal errors
       unless @arguments.include?(name)
-        raise Puppet::DevError, "Parameter '#{name}' is given a type, but is not a valid parameter."
+        raise Puppet::DevError, _("Parameter '%{name}' is given a type, but is not a valid parameter.") % { name: name }
       end
       unless t.is_a? Puppet::Pops::Types::PAnyType
-        raise Puppet::DevError, "Parameter '#{name}' is given a type that is not a Puppet Type, got #{t.class}"
+        raise Puppet::DevError, _("Parameter '%{name}' is given a type that is not a Puppet Type, got %{class_name}") % { name: name, class_name: t.class }
       end
       @argument_types[name] = t
     end
@@ -490,9 +442,9 @@ class Puppet::Resource::Type
   def convert_from_ast(name)
     value = name.value
     if value.is_a?(Puppet::Parser::AST::Regex)
-      name = value.value
+      value.value
     else
-      name = value
+      value
     end
   end
 
@@ -511,7 +463,7 @@ class Puppet::Resource::Type
   end
 
   def parent_scope(scope, klass)
-    scope.class_scope(klass) || raise(Puppet::DevError, "Could not find scope for #{klass.name}")
+    scope.class_scope(klass) || raise(Puppet::DevError, _("Could not find scope for %{class_name}") % { class_name: klass.name })
   end
 
   def set_name_and_namespace(name)
@@ -524,7 +476,7 @@ class Puppet::Resource::Type
       # Note we're doing something somewhat weird here -- we're setting
       # the class's namespace to its fully qualified name.  This means
       # anything inside that class starts looking in that namespace first.
-      @namespace, ignored_shortname = @type == :hostclass ? [@name, ''] : namesplit(@name)
+      @namespace, _ = @type == :hostclass ? [@name, ''] : namesplit(@name)
     end
   end
 

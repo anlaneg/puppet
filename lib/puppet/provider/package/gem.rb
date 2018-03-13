@@ -3,10 +3,12 @@ require 'uri'
 
 # Ruby gems support.
 Puppet::Type.type(:package).provide :gem, :parent => Puppet::Provider::Package do
-  desc "Ruby Gem support.  If a URL is passed via `source`, then that URL is used as the
-    remote gem repository; if a source is present but is not a valid URL, it will be
-    interpreted as the path to a local gem file.  If source is not present at all,
-    the gem will be installed from the default gem repositories.
+  desc "Ruby Gem support. If a URL is passed via `source`, then that URL is
+    appended to the list of remote gem repositories; to ensure that only the
+    specified source is used, also pass `--clear-sources` via `install_options`.
+    If source is present but is not a valid URL, it will be interpreted as the
+    path to a local gem file. If source is not present, the gem will be
+    installed from the default gem repositories. Note that to modify this for Windows, it has to be a valid URL.
 
     This provider supports the `install_options` and `uninstall_options` attributes,
     which allow command-line flags to be passed to the gem command.
@@ -29,11 +31,11 @@ Puppet::Type.type(:package).provide :gem, :parent => Puppet::Provider::Package d
       gem_list_command << "--source" << options[:source]
     end
     if name = options[:justme]
-      gem_list_command << "^" + name + "$"
+      gem_list_command << '\A' + name + '\z'
     end
 
     begin
-      list = execute(gem_list_command).lines.
+      list = execute(gem_list_command, {:failonfail => true, :combine => true, :custom_environment => {"HOME"=>ENV["HOME"]}}).lines.
         map {|set| gemsplit(set) }.
         reject {|x| x.nil? }
     rescue Puppet::ExecutionFailure => detail
@@ -56,7 +58,7 @@ Puppet::Type.type(:package).provide :gem, :parent => Puppet::Provider::Package d
 
     if desc =~ /^(\S+)\s+\((.+)\)/
       gem_name = $1
-      versions = $2.split(/,\s*/)
+      versions = $2.sub('default: ', '').split(/,\s*/)
       {
         :name     => gem_name,
         :ensure   => versions.map{|v| v.split[0]},
@@ -92,6 +94,7 @@ Puppet::Type.type(:package).provide :gem, :parent => Puppet::Provider::Package d
 
   def install(useversion = true)
     command = [command(:gemcmd), "install"]
+    command += install_options if resource[:install_options]
     if Puppet.features.microsoft_windows?
       version = resource[:ensure]
       command << "-v" << %Q["#{version}"] if (! resource[:ensure].is_a? Symbol) and useversion
@@ -128,9 +131,7 @@ Puppet::Type.type(:package).provide :gem, :parent => Puppet::Provider::Package d
       command << "--no-rdoc" << "--no-ri" << resource[:name]
     end
 
-    command += install_options if resource[:install_options]
-
-    output = execute(command)
+    output = execute(command, {:failonfail => true, :combine => true, :custom_environment => {"HOME"=>ENV["HOME"]}})
     # Apparently some stupid gem versions don't exit non-0 on failure
     self.fail _("Could not install: %{output}") % { output: output.chomp } if output.include?("ERROR")
   end
@@ -154,7 +155,7 @@ Puppet::Type.type(:package).provide :gem, :parent => Puppet::Provider::Package d
 
     command += uninstall_options if resource[:uninstall_options]
 
-    output = execute(command)
+    output = execute(command, {:failonfail => true, :combine => true, :custom_environment => {"HOME"=>ENV["HOME"]}})
 
     # Apparently some stupid gem versions don't exit non-0 on failure
     self.fail _("Could not uninstall: %{output}") % { output: output.chomp } if output.include?("ERROR")

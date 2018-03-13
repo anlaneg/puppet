@@ -10,7 +10,7 @@ module Puppet::Pops::Parser::InterpolationSupport
 
   # This is the starting point for a double quoted string with possible interpolation
   # The structure mimics that of the grammar.
-  # The logic is explicit (where the former implementation used parameters/strucures) given to a
+  # The logic is explicit (where the former implementation used parameters/structures) given to a
   # generic handler.
   # (This is both easier to understand and faster).
   #
@@ -221,7 +221,7 @@ module Puppet::Pops::Parser::InterpolationSupport
 
   def transform_to_variable(token)
     token_name = token[0]
-    if [:NUMBER, :NAME, :WORD].include?(token_name) || self.class::KEYWORD_NAMES[token_name]
+    if [:NUMBER, :NAME, :WORD].include?(token_name) || self.class::KEYWORD_NAMES[token_name] || @taskm_keywords[token_name]
       t = token[1]
       ta = t.token_array
       [:VARIABLE, self.class::TokenValue.new([:VARIABLE, ta[1], ta[2]], t.offset, t.locator)]

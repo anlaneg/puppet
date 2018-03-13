@@ -39,17 +39,17 @@ Puppet::Type.type(:package).provide :yum, :parent => :rpm, :source => :rpm do
   #
   # @api private
   # @param package [String] The name of the package to query
-  # @param enablerepo [Array<String>] A list of repositories to enable for this query
   # @param disablerepo [Array<String>] A list of repositories to disable for this query
+  # @param enablerepo [Array<String>] A list of repositories to enable for this query
   # @param disableexcludes [Array<String>] A list of repository excludes to disable for this query
   # @return [Hash<Symbol, String>]
-  def self.latest_package_version(package, enablerepo, disablerepo, disableexcludes)
+  def self.latest_package_version(package, disablerepo, enablerepo, disableexcludes)
 
-    key = [enablerepo, disablerepo, disableexcludes]
+    key = [disablerepo, enablerepo, disableexcludes]
 
     @latest_versions ||= {}
     if @latest_versions[key].nil?
-      @latest_versions[key] = check_updates(enablerepo, disablerepo, disableexcludes)
+      @latest_versions[key] = check_updates(disablerepo, enablerepo, disableexcludes)
     end
 
     if @latest_versions[key][package]
@@ -61,15 +61,15 @@ Puppet::Type.type(:package).provide :yum, :parent => :rpm, :source => :rpm do
   # combination of repositories to enable and disable.
   #
   # @api private
-  # @param enablerepo [Array<String>] A list of repositories to enable for this query
   # @param disablerepo [Array<String>] A list of repositories to disable for this query
+  # @param enablerepo [Array<String>] A list of repositories to enable for this query
   # @param disableexcludes [Array<String>] A list of repository excludes to disable for this query
   # @return [Hash<String, Array<Hash<String, String>>>] All packages that were
   #   found with a list of found versions for each package.
-  def self.check_updates(enablerepo, disablerepo, disableexcludes)
+  def self.check_updates(disablerepo, enablerepo, disableexcludes)
     args = [command(:cmd), 'check-update']
-    args.concat(enablerepo.map { |repo| ["--enablerepo=#{repo}"] }.flatten)
     args.concat(disablerepo.map { |repo| ["--disablerepo=#{repo}"] }.flatten)
+    args.concat(enablerepo.map { |repo| ["--enablerepo=#{repo}"] }.flatten)
     args.concat(disableexcludes.map { |repo| ["--disableexcludes=#{repo}"] }.flatten)
 
     output = Puppet::Util::Execution.execute(args, :failonfail => false, :combine => false)
@@ -92,6 +92,7 @@ Puppet::Type.type(:package).provide :yum, :parent => :rpm, :source => :rpm do
     updates = Hash.new { |h, k| h[k] = [] }
     body.split.each_slice(3) do |tuple|
       break if tuple[0] =~ /^(Obsoleting|Security:|Update)/
+      break unless tuple[1].match(/^(?:(\d+):)?(\S+)-(\S+)$/)
       hash = update_to_hash(*tuple[0..1])
       # Create entries for both the package name without a version and a
       # version since yum considers those as mostly interchangeable.
@@ -106,7 +107,15 @@ Puppet::Type.type(:package).provide :yum, :parent => :rpm, :source => :rpm do
   end
 
   def self.update_to_hash(pkgname, pkgversion)
-    name, arch = pkgname.split('.')
+    
+    # The pkgname string has two parts: name, and architecture. Architecture
+    # is the portion of the string following the last "." character. All
+    # characters preceding the final dot are the package name. Parse out
+    # these two pieces of component data.
+    name, _, arch = pkgname.rpartition('.')
+    if name.empty?
+      raise _("Failed to parse package name and architecture from '%{pkgname}'") % { pkgname: pkgname }
+    end
 
     match = pkgversion.match(/^(?:(\d+):)?(\S+)-(\S+)$/)
     epoch = match[1] || '0'
@@ -136,7 +145,7 @@ Puppet::Type.type(:package).provide :yum, :parent => :rpm, :source => :rpm do
     # Quote the DNF docs:
     # "Yum does this if its obsoletes config option is enabled but
     # the behavior is not properly documented and can be harmful."
-    # So we'll stick with the safter option
+    # So we'll stick with the safer option
     # If a user wants to remove obsoletes, they can use { :install_options => '--obsoletes' }
     # More detail here: https://bugzilla.redhat.com/show_bug.cgi?id=1096506
     'update'
@@ -166,17 +175,32 @@ Puppet::Type.type(:package).provide :yum, :parent => :rpm, :source => :rpm do
         operation = :install
       end
       should = nil
-    when true, false, Symbol
+    when true, :present, :installed
+      # if we have been given a source and we were not asked for a specific
+      # version feed it to yum directly
+      if @resource[:source]
+        wanted = @resource[:source]
+        self.debug "Installing directly from #{wanted}"
+      end
+      should = nil
+    when false,:absent
       # pass
       should = nil
     else
-      # Add the package version
-      wanted += "-#{should}"
-      if wanted.scan(ARCH_REGEX)
-        self.debug "Detected Arch argument in package! - Moving arch to end of version string"
-        wanted.gsub!(/(.+)(#{ARCH_REGEX})(.+)/,'\1\3\2')
+      if @resource[:source]
+        # An explicit source was supplied, which means we're ensuring a specific
+        # version, and also supplying the path to a package that supplies that
+        # version.
+        wanted = @resource[:source]
+        self.debug "Installing directly from #{wanted}"
+      else
+        # No explicit source was specified, so add the package version
+        wanted += "-#{should}"
+        if wanted.scan(ARCH_REGEX)
+          self.debug "Detected Arch argument in package! - Moving arch to end of version string"
+          wanted.gsub!(/(.+)(#{ARCH_REGEX})(.+)/,'\1\3\2')
+        end
       end
-
       current_package = self.query
       if current_package
         if rpm_compareEVR(rpm_parse_evr(should), rpm_parse_evr(current_package[:ensure])) < 0
@@ -213,7 +237,7 @@ Puppet::Type.type(:package).provide :yum, :parent => :rpm, :source => :rpm do
 
   # What's the latest package version available?
   def latest
-    upd = self.class.latest_package_version(@resource[:name], enablerepo, disablerepo, disableexcludes)
+    upd = self.class.latest_package_version(@resource[:name], disablerepo, enablerepo, disableexcludes)
     unless upd.nil?
       # FIXME: there could be more than one update for a package
       # because of multiarch
@@ -221,7 +245,7 @@ Puppet::Type.type(:package).provide :yum, :parent => :rpm, :source => :rpm do
     else
       # Yum didn't find updates, pretend the current version is the latest
       version = properties[:ensure]
-      raise Puppet::DevError, "Tried to get latest on a missing package" if version == :absent || version == :purged
+      raise Puppet::DevError, _("Tried to get latest on a missing package") if version == :absent || version == :purged
       return version
     end
   end

@@ -160,7 +160,7 @@ module Generators
         @allfiles << { "file" => file, "modules" => modules, "classes" => classes, "methods" => methods, "nodes" => nodes }
       end
 
-      # scan all classes to create the childs references
+      # scan all classes to create the child's references
       @allclasses.values.each do |klass|
         if superklass = klass.context.superclass
           if superklass = AllReferences[superklass] and (superklass.is_a?(HTMLPuppetClass) or superklass.is_a?(HTMLPuppetNode))
@@ -245,7 +245,7 @@ module Generators
       end
     end
 
-    def gen_composite_index(collection, template, filename)\
+    def gen_composite_index(collection, template, filename)
       return if Puppet::FileSystem.exist?(filename)
 
       template = TemplatePage.new(RDoc::Page::FR_INDEX_BODY, template)
@@ -383,7 +383,7 @@ module Generators
       resources.each do |r|
         res << {
           "name" => CGI.escapeHTML(r.name),
-          "aref" => CGI.escape(path_prefix)+"\#"+CGI.escape(r.aref)
+          "aref" => Puppet::Util.uri_encode(path_prefix)+"\#"+Puppet::Util.uri_query_encode(r.aref)
         }
       end
       res
@@ -896,7 +896,7 @@ module Generators
 
     def find_symbol(symbol, method=nil)
       res = @context.parent.find_symbol(symbol, method)
-      res &&= res.viewer
+      res && res.viewer
     end
 
   end

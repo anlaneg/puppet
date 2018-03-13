@@ -1,4 +1,5 @@
 #! /usr/bin/env ruby
+# encoding: utf-8
 require 'spec_helper'
 
 require 'puppet/external/nagios'
@@ -89,10 +90,17 @@ define command {
 }
 EOL
 
+  UNICODE_NAGIOS_CONTACT = <<-EOL
+define contact {
+\talias                          Paul Tötterman
+\tcontact_name                   ptman
+}
+EOL
+
   it "should parse without error" do
     parser =  Nagios::Parser.new
     expect {
-      results = parser.parse(NONESCAPED_SEMICOLON_COMMENT)
+      parser.parse(NONESCAPED_SEMICOLON_COMMENT)
     }.to_not raise_error
   end
 
@@ -109,14 +117,14 @@ EOL
   it "should raise an error when an incorrect object definition is present" do
     parser =  Nagios::Parser.new
     expect {
-      results = parser.parse(UNKNOWN_NAGIOS_OBJECT_DEFINITION)
+      parser.parse(UNKNOWN_NAGIOS_OBJECT_DEFINITION)
     }.to raise_error Nagios::Base::UnknownNagiosType
   end
 
   it "should raise an error when syntax is not correct" do
     parser =  Nagios::Parser.new
     expect {
-      results = parser.parse(MISSING_CLOSING_CURLY_BRACKET)
+      parser.parse(MISSING_CLOSING_CURLY_BRACKET)
     }.to raise_error Nagios::Parser::SyntaxError
   end
 
@@ -124,7 +132,7 @@ EOL
     it "should not throw an exception" do
       parser =  Nagios::Parser.new
       expect {
-        results = parser.parse(ESCAPED_SEMICOLON)
+        parser.parse(ESCAPED_SEMICOLON)
       }.to_not raise_error
     end
 
@@ -146,7 +154,7 @@ EOL
     it "should not throw an exception" do
       parser =  Nagios::Parser.new
       expect {
-        results = parser.parse(POUND_SIGN_HASH_SYMBOL_NOT_IN_FIRST_COLUMN)
+        parser.parse(POUND_SIGN_HASH_SYMBOL_NOT_IN_FIRST_COLUMN)
       }.to_not raise_error
     end
 
@@ -169,7 +177,7 @@ EOL
     it "should not throw an exception" do
       parser =  Nagios::Parser.new
       expect {
-        results = parser.parse(ANOTHER_ESCAPED_SEMICOLON)
+        parser.parse(ANOTHER_ESCAPED_SEMICOLON)
       }.to_not raise_error
     end
 
@@ -190,7 +198,19 @@ EOL
     nagios_type.command_line = results[0].command_line
     expect(nagios_type.to_s).to eql(ANOTHER_ESCAPED_SEMICOLON)
   end
-
+  describe "when reading UTF8 values" do
+    it "should be converted to ASCII_8BIT for ruby 1.9 / 2.0", :if => RUBY_VERSION < "2.1.0" && String.method_defined?(:encode) do
+      parser = Nagios::Parser.new
+      results = parser.parse(UNICODE_NAGIOS_CONTACT)
+      expect(results[0].alias.encoding).to eq(Encoding::ASCII_8BIT)
+      expect(results[0].alias).to eq('Paul Tötterman'.force_encoding(Encoding::ASCII_8BIT))
+    end
+    it "must not be converted for ruby >= 2.1", :if => RUBY_VERSION >= "2.1.0" do
+      parser = Nagios::Parser.new
+      results = parser.parse(UNICODE_NAGIOS_CONTACT)
+      expect(results[0].alias.encoding).to eq(Encoding::UTF_8)
+    end
+  end
 end
 
 describe "Nagios generator" do

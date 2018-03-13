@@ -3,8 +3,6 @@ require 'spec_helper'
 require 'rbconfig'
 require 'fileutils'
 
-provider_class = Puppet::Type.type(:service).provider(:init)
-
 describe "base service provider" do
   include PuppetSpec::Files
 
@@ -19,8 +17,8 @@ describe "base service provider" do
 
   if Puppet.features.microsoft_windows?
     # Get a pid for $CHILD_STATUS to latch on to
-    command = "cmd.exe /c \"exit 0\""
-    Puppet::Util::Execution.execute(command, {:failonfail => false})
+    cmd = "cmd.exe /c \"exit 0\""
+    Puppet::Util::Execution.execute(cmd, {:failonfail => false})
   end
 
   context "basic operations" do
@@ -89,6 +87,26 @@ describe "base service provider" do
       subject.start
       subject.stop
       expect {subject.stop }.to raise_error(Puppet::Error, 'Could not stop Service[test]: failed to stop')
+    end
+  end
+
+  context "when hasstatus is false" do
+    subject do
+      type.new(
+         :name  => "status test",
+         :provider => :base,
+         :hasstatus => false,
+         :pattern => "majestik m\u00f8\u00f8se",
+      ).provider
+    end
+
+    it "retrieves a PID from the process table" do
+      Facter.stubs(:value).with(:operatingsystem).returns("CentOS")
+      ps_output = File.binread(my_fixture("ps_ef.mixed_encoding")).force_encoding(Encoding::UTF_8)
+
+      executor.expects(:execute).with("ps -ef").returns(ps_output)
+
+      expect(subject.status).to eq(:running)
     end
   end
 end

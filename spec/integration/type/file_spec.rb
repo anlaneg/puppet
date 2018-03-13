@@ -292,13 +292,14 @@ describe Puppet::Type.type(:file), :uses_checksums => true do
             Puppet::FileSystem.symlink(link_target, link)
           end
 
-          it "should not set the executable bit on the link nor the target" do
+          it "should not set the executable bit on the link target" do
             catalog.add_resource described_class.new(:path => link, :ensure => :link, :mode => '0666', :target => link_target, :links => :manage)
 
             catalog.apply
 
-            (Puppet::FileSystem.stat(link).mode & 07777) == 0666
-            (Puppet::FileSystem.lstat(link_target).mode & 07777) == 0444
+            expected_target_permissions = Puppet::Util::Platform.windows? ? 0700 : 0444
+
+            expect(Puppet::FileSystem.stat(link_target).mode & 07777).to eq(expected_target_permissions)
           end
 
           it "should ignore dangling symlinks (#6856)" do
@@ -479,7 +480,11 @@ describe Puppet::Type.type(:file), :uses_checksums => true do
 
   describe "when writing files" do
     shared_examples "files are backed up" do |resource_options|
-      it "should backup files to a filebucket when one is configured" do
+      it "should backup files to a filebucket when one is configured" do |example|
+        if Puppet::Util::Platform.windows? && ['sha512', 'sha384'].include?(example.metadata[:digest_algorithm])
+          skip "PUP-8257: Skip file bucket test on windows for #{example.metadata[:digest_algorithm]} due to long path names"
+        end
+
         filebucket = Puppet::Type.type(:filebucket).new :path => tmpfile("filebucket"), :name => "mybucket"
         file = described_class.new({:path => path, :backup => "mybucket", :content => "foo"}.merge(resource_options))
         catalog.add_resource file
@@ -537,8 +542,6 @@ describe Puppet::Type.type(:file), :uses_checksums => true do
         File.open(dest1, "w") { |f| f.puts "whatever" }
         Puppet::FileSystem.symlink(dest1, link)
 
-        d = filebucket_digest.call(File.read(file[:path]))
-
         catalog.apply
 
         expect(Puppet::FileSystem.readlink(link)).to eq(dest2)
@@ -562,7 +565,11 @@ describe Puppet::Type.type(:file), :uses_checksums => true do
         expect(File.read(File.join(backup, "foo"))).to eq("yay")
       end
 
-      it "should backup directories to filebuckets by backing up each file separately" do
+      it "should backup directories to filebuckets by backing up each file separately" do |example|
+        if Puppet::Util::Platform.windows? && ['sha512', 'sha384'].include?(example.metadata[:digest_algorithm])
+          skip "PUP-8257: Skip file bucket test on windows for #{example.metadata[:digest_algorithm]} due to long path names"
+        end
+        
         bucket = Puppet::Type.type(:filebucket).new :path => tmpfile("filebucket"), :name => "mybucket"
         file = described_class.new({:path => tmpfile("bucket_backs"), :backup => "mybucket", :content => "foo", :force => true}.merge(resource_options))
         catalog.add_resource file
@@ -654,13 +661,13 @@ describe Puppet::Type.type(:file), :uses_checksums => true do
       catalog.apply
 
       expect(@dirs).not_to be_empty
-      @dirs.each do |path|
-        expect(get_mode(path) & 007777).to eq(0755)
+      @dirs.each do |dir|
+        expect(get_mode(dir) & 007777).to eq(0755)
       end
 
       expect(@files).not_to be_empty
-      @files.each do |path|
-        expect(get_mode(path) & 007777).to eq(0644)
+      @files.each do |dir|
+        expect(get_mode(dir) & 007777).to eq(0644)
       end
     end
 
@@ -1022,8 +1029,8 @@ describe Puppet::Type.type(:file), :uses_checksums => true do
     before do
       source = tmpdir("generating_in_catalog_source")
 
-      s1 = file_in_dir_with_contents(source, "one", "uno")
-      s2 = file_in_dir_with_contents(source, "two", "dos")
+      file_in_dir_with_contents(source, "one", "uno")
+      file_in_dir_with_contents(source, "two", "dos")
 
       @file = described_class.new(
         :name => path,
@@ -1072,6 +1079,35 @@ describe Puppet::Type.type(:file), :uses_checksums => true do
       catalog.apply
 
       expect(File.read(dest)).to eq("foo")
+    end
+
+    it "should maintain source URIs as UTF-8 with Unicode characters in their names and be able to copy such files" do
+      # different UTF-8 widths
+      # 1-byte A
+      # 2-byte ۿ - http://www.fileformat.info/info/unicode/char/06ff/index.htm - 0xDB 0xBF / 219 191
+      # 3-byte ᚠ - http://www.fileformat.info/info/unicode/char/16A0/index.htm - 0xE1 0x9A 0xA0 / 225 154 160
+      # 4-byte <U+070E> - http://www.fileformat.info/info/unicode/char/2070E/index.htm - 0xF0 0xA0 0x9C 0x8E / 240 160 156 142
+      mixed_utf8 = "A\u06FF\u16A0\u{2070E}" # Aۿᚠ<U+070E>
+
+      dest = tmpfile("destwith #{mixed_utf8}")
+      source = tmpfile_with_contents("filewith #{mixed_utf8}", "foo")
+      catalog.add_resource described_class.new(:path => dest, :source => source)
+
+      catalog.apply
+
+      # find the resource and verify
+      resource = catalog.resources.first { |r| r.title == "File[#{dest}]" }
+      uri_path = resource.parameters[:source].uri.path
+
+      # note that Windows file:// style URIs get an extra / in front of c:/ like /c:/
+      source_prefix = Puppet.features.microsoft_windows? ? '/' : ''
+
+      # the URI can be round-tripped through unescape
+      expect(URI.unescape(uri_path)).to eq(source_prefix + source)
+      # and is properly UTF-8
+      expect(uri_path.encoding).to eq (Encoding::UTF_8)
+
+      expect(File.read(dest)).to eq('foo')
     end
 
     it "should be able to copy individual files even if recurse has been specified" do
@@ -1787,7 +1823,7 @@ describe Puppet::Type.type(:file), :uses_checksums => true do
     end
   end
 
-  [:md5, :sha256, :md5lite, :sha256lite].each do |checksum|
+  [:md5, :sha256, :md5lite, :sha256lite, :sha384, :sha512, :sha224].each do |checksum|
     describe "setting checksum_value explicitly with checksum #{checksum}" do
       let(:path) { tmpfile('target') }
       let(:contents) { 'yay' }

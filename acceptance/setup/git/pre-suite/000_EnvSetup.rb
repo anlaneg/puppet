@@ -11,7 +11,9 @@ PACKAGES = {
   :redhat => [
     'git',
     'ruby',
-    'rubygem-json',
+    'rubygem-json',       # invalid on RHEL6
+    'rubygem-io-console', # required for Fedora25 to bundle install
+    'rubygem-rdoc'        # required for Fedora25 to install gems
   ],
   :debian => [
     ['git', 'git-core'],
@@ -105,14 +107,15 @@ hosts.each do |host|
     step "#{host} Selected architecture #{arch}"
 
     revision = if arch == 'x64'
-                 '2.1.x-x64'
+                 '2.4.x-x64'
                else
-                 '2.1.x-x86'
+                 '2.4.x-x86'
                end
 
     step "#{host} Install ruby from git using revision #{revision}"
     # TODO remove this step once we are installing puppet from msi packages
-    install_from_git_on(host, "/opt/puppet-git-repos",
+    win_path = on(host, 'cygpath -m /opt/puppet-git-repos').stdout.chomp
+    install_from_git_on(host, win_path,
                      :name => 'puppet-win32-ruby',
                      :path => build_git_url('puppet-win32-ruby'),
                      :rev  => revision)
@@ -132,8 +135,7 @@ configure_gem_mirror(hosts)
 hosts.each do |host|
   case host['platform']
   when /solaris/
-    step "#{host} Install json from rubygems"
-    on host, 'gem install json_pure --no-ri --no-rdoc --version 1.8.3' # json_pure 2.0 requires ruby 2
+    step "#{host} Install bundler from rubygems"
     on host, 'gem install bundler --no-ri --no-rdoc'
     on host, "ln -sf /opt/csw/bin/bundle #{host['puppetbindir']}/bundle"
   when /windows/

@@ -45,7 +45,9 @@ module Puppet::Util::Plist
                                                   {:failonfail => true, :combine => true})
           return parse_plist(plist)
         rescue Puppet::ExecutionFailure => detail
-          Puppet.warning(_("Cannot read file %{file_path}; Puppet is skipping it.\n") % { file_path: file_path } + _("Details: %{detail}") % { detail: detail })
+          message = _("Cannot read file %{file_path}; Puppet is skipping it.") % { file_path: file_path }
+          message += '\n' + _("Details: %{detail}") % { detail: detail }
+          Puppet.warning(message)
         end
       end
       return nil
@@ -122,9 +124,11 @@ module Puppet::Util::Plist
 
     def to_format(format)
       if format.to_sym == :xml
-        plist_format = CFPropertyList::List::FORMAT_XML
+        CFPropertyList::List::FORMAT_XML
       elsif format.to_sym == :binary
-        plist_format = CFPropertyList::List::FORMAT_BINARY
+        CFPropertyList::List::FORMAT_BINARY
+      elsif format.to_sym == :plain
+        CFPropertyList::List::FORMAT_PLAIN
       else
         raise FormatError.new "Unknown plist format #{format}"
       end

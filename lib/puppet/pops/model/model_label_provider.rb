@@ -60,6 +60,7 @@ class ModelLabelProvider
   def label_HeredocExpression o           ; "'@(#{o.syntax})' expression"       end
   def label_HostClassDefinition o         ; "Host Class Definition"             end
   def label_FunctionDefinition o          ; "Function Definition"               end
+  def label_PlanDefinition o              ; "Plan Definition"                   end
   def label_NodeDefinition o              ; "Node Definition"                   end
   def label_SiteDefinition o              ; "Site Definition"                   end
   def label_ResourceTypeDefinition o      ; "'define' expression"               end
@@ -122,7 +123,8 @@ class ModelLabelProvider
       simple_name = o.name.split('::').last
       simple_name[1..-5] + "-Type"
     else
-      o.name
+      n = o.name
+      n.nil? ? 'Anonymous Class' : n
     end
   end
 end

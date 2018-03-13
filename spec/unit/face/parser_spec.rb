@@ -72,7 +72,7 @@ describe Puppet::Face[:parser, :current] do
           expect { parser.validate(manifest) }.to exit_with(1)
         end
 
-        expect(@logs.join).to match(/environment special.*Syntax error at end of file/)
+        expect(@logs.join).to match(/environment special.*Syntax error at end of input/)
       end
 
     end
@@ -117,7 +117,7 @@ describe Puppet::Face[:parser, :current] do
       output = parser.dump({ :e => '{ invalid =>' })
 
       expect(output).to eq("")
-      expect(@logs[0].message).to eq("Syntax error at end of file")
+      expect(@logs[0].message).to eq("Syntax error at end of input")
       expect(@logs[0].level).to eq(:err)
     end
 
@@ -144,6 +144,84 @@ describe Puppet::Face[:parser, :current] do
           "type A = String; type B = Array[A]; function valid(B $x) { $x } notify{ valid([valid]): }")
         parser.dump(manifest)
       }.to_not raise_error
+    end
+
+    context "using 'pn' format" do
+      it "prints the AST of the given expression in PN format" do
+        expect(parser.dump({ :format => 'pn', :e => 'if $x { "hi ${x[2]}" }' })).to eq(
+          '(if {:test (var "x") :then [(concat "hi " (str (access (var "x") 2)))]})')
+      end
+
+      it "pretty prints the AST of the given expression in PN format when --pretty is given" do
+        expect(parser.dump({ :pretty => true, :format => 'pn', :e => 'if $x { "hi ${x[2]}" }' })).to eq(<<-RESULT.unindent[0..-2])
+        (if
+          {
+            :test (var
+              "x")
+            :then [
+              (concat
+                "hi "
+                (str
+                  (access
+                    (var
+                      "x")
+                    2)))]})
+        RESULT
+      end
+    end
+
+    context "using 'json' format" do
+      it "prints the AST of the given expression in JSON based on the PN format" do
+        expect(parser.dump({ :format => 'json', :e => 'if $x { "hi ${x[2]}" }' })).to eq(
+          '{"^":["if",{"#":["test",{"^":["var","x"]},"then",[{"^":["concat","hi ",{"^":["str",{"^":["access",{"^":["var","x"]},2]}]}]}]]}]}')
+      end
+
+      it "pretty prints the AST of the given expression in JSON based on the PN format when --pretty is given" do
+        expect(parser.dump({ :pretty => true, :format => 'json', :e => 'if $x { "hi ${x[2]}" }' })).to eq(<<-RESULT.unindent[0..-2])
+        {
+          "^": [
+            "if",
+            {
+              "#": [
+                "test",
+                {
+                  "^": [
+                    "var",
+                    "x"
+                  ]
+                },
+                "then",
+                [
+                  {
+                    "^": [
+                      "concat",
+                      "hi ",
+                      {
+                        "^": [
+                          "str",
+                          {
+                            "^": [
+                              "access",
+                              {
+                                "^": [
+                                  "var",
+                                  "x"
+                                ]
+                              },
+                              2
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              ]
+            }
+          ]
+        }
+        RESULT
+      end
     end
   end
 

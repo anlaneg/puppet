@@ -127,9 +127,9 @@ class Runtime3Converter
   # Ensures that resources are *not* absolute.
   #
   def catalog_type_to_split_type_title(catalog_type)
-    split_type = catalog_type.is_a?(Puppet::Pops::Types::PType) ? catalog_type.type : catalog_type
+    split_type = catalog_type.is_a?(Puppet::Pops::Types::PTypeType) ? catalog_type.type : catalog_type
     case split_type
-      when Puppet::Pops::Types::PHostClassType
+      when Puppet::Pops::Types::PClassType
         class_name = split_type.class_name
         ['class', class_name.nil? ? nil : class_name.sub(/^::/, '')]
       when Puppet::Pops::Types::PResourceType
@@ -143,7 +143,9 @@ class Runtime3Converter
           [type_name.nil? ? nil : type_name.sub(/^::/, '').downcase, title.nil? ? '' : title]
         end
       else
-        raise ArgumentError, "Cannot split the type #{catalog_type.class}, it represents neither a PHostClassType, nor a PResourceType."
+        #TRANSLATORS 'PClassType' and 'PResourceType' are Puppet types and should not be translated
+        raise ArgumentError, _("Cannot split the type %{class_name}, it represents neither a PClassType, nor a PResourceType.") %
+            { class_name: catalog_type.class }
     end
   end
 
@@ -164,7 +166,7 @@ end
 class Runtime3FunctionArgumentConverter < Runtime3Converter
 
   def convert_Regexp(o, scope, undef_value)
-    # Puppet 3x cannot handle parameter values that are reqular expressions. Turn into regexp string in
+    # Puppet 3x cannot handle parameter values that are regular expressions. Turn into regexp string in
     # source form
     o.inspect
   end

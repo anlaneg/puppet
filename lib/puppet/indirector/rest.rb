@@ -1,6 +1,7 @@
 require 'net/http'
 require 'uri'
 require 'json'
+require 'semantic_puppet'
 
 require 'puppet/network/http'
 require 'puppet/network/http_pool'
@@ -10,6 +11,10 @@ class Puppet::Indirector::REST < Puppet::Indirector::Terminus
   include Puppet::Network::HTTP::Compression.module
 
   IndirectedRoutes = Puppet::Network::HTTP::API::IndirectedRoutes
+  EXCLUDED_FORMATS = [:yaml, :b64_zlib_yaml, :dot]
+
+  # puppet major version where JSON is enabled by default
+  MAJOR_VERSION_JSON_DEFAULT = 5
 
   class << self
     attr_reader :server_setting, :port_setting
@@ -101,11 +106,10 @@ class Puppet::Indirector::REST < Puppet::Indirector::Terminus
   # Provide appropriate headers.
   def headers
     # yaml is not allowed on the network
-    network_formats = model.supported_formats.reject do |format|
-      [:yaml, :b64_zlib_yaml].include?(format)
-    end
+    network_formats = model.supported_formats - EXCLUDED_FORMATS
+    mime_types = network_formats.map { |f| model.get_format(f).mime }
     common_headers = {
-      "Accept"                                     => network_formats.join(", "),
+      "Accept"                                     => mime_types.join(', '),
       Puppet::Network::HTTP::HEADER_PUPPET_VERSION => Puppet.version
     }
 
@@ -179,7 +183,7 @@ class Puppet::Indirector::REST < Puppet::Indirector::Terminus
       # While this way of handling the issue is not perfect, there is at least an error
       # that makes a user aware of the reason for the failure.
       #
-      content_type, body = parse_response(response)
+      _, body = parse_response(response)
       msg = _("Find %{uri} resulted in 404 with the message: %{body}") % { uri: elide(uri_with_query_string, 100), body: body }
       raise Puppet::Error, msg
     else
@@ -249,7 +253,24 @@ class Puppet::Indirector::REST < Puppet::Indirector::Terminus
   # to request.do_request from here, thus if we change what we pass or how we
   # get it, we only need to change it here.
   def do_request(request)
-    request.do_request(self.class.srv_service, self.class.server, self.class.port) { |req| yield(req) }
+    response = request.do_request(self.class.srv_service, self.class.server, self.class.port) { |req| yield(req) }
+
+    handle_response(request, response) if response
+
+    response
+  end
+
+  def handle_response(request, response)
+    server_version = response[Puppet::Network::HTTP::HEADER_PUPPET_VERSION]
+    if server_version
+      Puppet.push_context({:server_agent_version => server_version})
+      if SemanticPuppet::Version.parse(server_version).major < MAJOR_VERSION_JSON_DEFAULT &&
+          Puppet[:preferred_serialization_format] != 'pson'
+        #TRANSLATORS "PSON" should not be translated
+        Puppet.warning(_("Downgrading to PSON for future requests"))
+        Puppet[:preferred_serialization_format] = 'pson'
+      end
+    end
   end
 
   def validate_key(request)
@@ -297,8 +318,7 @@ class Puppet::Indirector::REST < Puppet::Indirector::Terminus
   # uncompress_body)
   def parse_response(response)
     if response['content-type']
-      [ response['content-type'].gsub(/\s*;.*$/,''),
-        body = uncompress_body(response) ]
+      [ response['content-type'].gsub(/\s*;.*$/,''), uncompress_body(response) ]
     else
       raise _("No content type in http response; cannot parse")
     end

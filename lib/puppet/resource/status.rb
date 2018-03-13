@@ -31,7 +31,7 @@ module Puppet
 
       # Boolean status types set while evaluating `@real_resource`.
       STATES = [:skipped, :failed, :failed_to_restart, :restarted, :changed, :out_of_sync, :scheduled, :corrective_change]
-      attr_accessor *STATES
+      attr_accessor(*STATES)
 
       # @!attribute [r] source_description
       #   @return [String] The textual description of the path to `@real_resource`
@@ -74,6 +74,10 @@ module Puppet
       #   @return [String] The class name of `@real_resource`
       attr_reader :resource_type
 
+      # @!attribute [rw] provider_used
+      #   @return [String] The class name of the provider used for the resource
+      attr_accessor :provider_used
+
       # @!attribute [r] title
       #   @return [String] The title of `@real_resource`
       attr_reader :title
@@ -95,14 +99,6 @@ module Puppet
       def dependency_failed?
         failed_dependencies && !failed_dependencies.empty?
       end
-
-      # A list of instance variables that should be serialized with this object
-      # when converted to YAML.
-      YAML_ATTRIBUTES = %w{@resource @file @line @evaluation_time @change_count
-                           @out_of_sync_count @tags @time @events @out_of_sync
-                           @changed @resource_type @title @skipped @failed
-                           @containment_path}.
-        map(&:to_sym)
 
       def self.from_data_hash(data)
         obj = self.allocate
@@ -141,12 +137,18 @@ module Puppet
 
       def failed_because(detail)
         @real_resource.log_exception(detail, _("Could not evaluate: %{detail}") % { detail: detail })
-        failed = true
         # There's a contract (implicit unfortunately) that a status of failed
         # will always be accompanied by an event with some explanatory power.  This
         # is useful for reporting/diagnostics/etc.  So synthesize an event here
         # with the exception detail as the message.
-        add_event(@real_resource.event(:name => :resource_error, :status => "failure", :message => detail.to_s))
+        fail_with_event(detail.to_s)
+      end
+
+      # Both set the status state to failed and generate a corresponding
+      # Puppet::Transaction::Event failure with the given message.
+      # @param message [String] the reason for a status failure
+      def fail_with_event(message)
+        add_event(@real_resource.event(:name => :resource_error, :status => "failure", :message => message))
       end
 
       def initialize(resource)
@@ -165,15 +167,17 @@ module Puppet
         @file = resource.file
         @line = resource.line
 
-        tag(*resource.tags)
+        merge_tags_from(resource)
         @time = Time.now
         @events = []
         @resource_type = resource.type.to_s.capitalize
+        @provider_used = resource.provider.class.name.to_s unless resource.provider.nil?
         @title = resource.title
       end
 
       def initialize_from_hash(data)
         @resource_type = data['resource_type']
+        @provider_used = data['provider_used']
         @title = data['title']
         @resource = data['resource']
         @containment_path = data['containment_path']
@@ -191,14 +195,8 @@ module Puppet
         @failed = data['failed']
         @corrective_change = data['corrective_change']
         @events = data['events'].map do |event|
-          # in YAML (for reports) we serialize this as an object, but
-          # in PSON it becomes a hash. Depending on where we came from
-          # we might not need to deserialize it.
-          if event.class == Puppet::Transaction::Event
-            event
-          else
-            Puppet::Transaction::Event.from_data_hash(event)
-          end
+          # Older versions contain tags that causes Psych to create instances directly
+          event.is_a?(Puppet::Transaction::Event) ? event : Puppet::Transaction::Event.from_data_hash(event)
         end
       end
 
@@ -209,6 +207,7 @@ module Puppet
           'line' => @line,
           'resource' => @resource,
           'resource_type' => @resource_type,
+          'provider_used' => @provider_used,
           'containment_path' => @containment_path,
           'evaluation_time' => @evaluation_time,
           'tags' => @tags.to_a,
@@ -219,13 +218,9 @@ module Puppet
           'skipped' => @skipped,
           'change_count' => @change_count,
           'out_of_sync_count' => @out_of_sync_count,
-          'events' => @events,
+          'events' => @events.map { |event| event.to_data_hash },
           'corrective_change' => @corrective_change,
         }
-      end
-
-      def to_yaml_properties
-        YAML_ATTRIBUTES & super
       end
     end
   end

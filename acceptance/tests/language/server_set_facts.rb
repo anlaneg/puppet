@@ -2,6 +2,10 @@ test_name 'C64667: ensure server_facts is set and error if any value is overwrit
   require 'puppet/acceptance/environment_utils.rb'
   extend Puppet::Acceptance::EnvironmentUtils
 
+tag 'audit:medium',
+    'audit:acceptance', # Validating server/client interaction
+    'server'
+
   app_type        = File.basename(__FILE__, '.*')
   tmp_environment = mk_tmp_environment_with_teardown(master, app_type)
   fq_tmp_environmentpath  = "#{environmentpath}/#{tmp_environment}"
@@ -28,8 +32,11 @@ test_name 'C64667: ensure server_facts is set and error if any value is overwrit
       on(agent, puppet("agent -t --server #{master}",
                        'ENV' => { 'FACTER_server_facts' => 'overwrite' }),
         :acceptable_exit_codes => 1) do |result|
-                         assert_match(/Error.*Attempt to assign to a reserved variable name: 'server_facts'/,
-                     result.stderr, "#{agent}: $server_facts should error if overwritten" )
+          # Do not perform this check on non-English hosts
+          unless agent['locale'] == 'ja'
+            assert_match(/Error.*Attempt to assign to a reserved variable name: 'server_facts'/,
+                         result.stderr, "#{agent}: $server_facts should error if overwritten" )
+          end
       end
     end
   end

@@ -8,6 +8,11 @@ describe "Two step scoping for variables" do
     expect(catalog.resource('Notify', 'something')[:message]).to eq(message)
   end
 
+  def expect_the_message_not_to_be(message, node = Puppet::Node.new('the node'))
+    catalog = compile_to_catalog(yield, node)
+    expect(catalog.resource('Notify', 'something')[:message]).to_not eq(message)
+  end
+
   before :each do
     Puppet.expects(:deprecation_warning).never
   end
@@ -15,7 +20,7 @@ describe "Two step scoping for variables" do
   describe "using unsupported operators" do
     it "issues an error for +=" do
       expect do
-        catalog = compile_to_catalog(<<-MANIFEST)
+        compile_to_catalog(<<-MANIFEST)
               $var = ["top_msg"]
               node default {
                 $var += ["override"]
@@ -26,7 +31,7 @@ describe "Two step scoping for variables" do
 
     it "issues an error for -=" do
       expect do
-        catalog = compile_to_catalog(<<-MANIFEST)
+        compile_to_catalog(<<-MANIFEST)
               $var = ["top_msg"]
               node default {
                 $var -= ["top_msg"]
@@ -42,7 +47,7 @@ describe "Two step scoping for variables" do
           compile_to_catalog("$name = 'never in a 0xF4240 years'", enc_node)
         }.to raise_error(
           Puppet::Error,
-          /Cannot reassign built in \(or already assigned\) variable '\$name' at line 1(\:7)? on node the_node/
+          /Cannot reassign built in \(or already assigned\) variable '\$name' \(line: 1(, column: 7)?\) on node the_node/
         )
     end
 
@@ -53,7 +58,7 @@ describe "Two step scoping for variables" do
           compile_to_catalog("$title = 'never in a 0xF4240 years'", enc_node)
         }.to raise_error(
           Puppet::Error,
-          /Cannot reassign built in \(or already assigned\) variable '\$title' at line 1(\:8)? on node the_node/
+          /Cannot reassign built in \(or already assigned\) variable '\$title' \(line: 1(, column: 8)?\) on node the_node/
         )
     end
 
@@ -250,13 +255,15 @@ describe "Two step scoping for variables" do
       end
     end
 
-    it "finds a qualified variable by following parent scopes of the specified scope" do
-      expect_the_message_to_be("from node") do <<-MANIFEST
+    it "finds a qualified variable by following inherited scope of the specified scope" do
+      expect_the_message_to_be("from parent") do <<-MANIFEST
             class c {
               notify { 'something': message => "$a::b" }
             }
-
-            class a { }
+            class parent {
+              $b = 'from parent'
+            }
+            class a inherits parent { }
 
             node default {
               $b = "from node"
@@ -264,6 +271,61 @@ describe "Two step scoping for variables" do
               include c
             }
         MANIFEST
+      end
+    end
+
+    ['a:.b', '::a::b'].each do |ref|
+      it "does not resolve a qualified name on the form #{ref} against top scope" do
+        expect_the_message_not_to_be("from topscope") do <<-"MANIFEST"
+              class c {
+                notify { 'something': message => "$#{ref}" }
+              }
+              class parent {
+                $not_b = 'from parent'
+              }
+              class a inherits parent { }
+
+              $b = "from topscope"
+              node default {
+                include a
+                include c
+              }
+          MANIFEST
+        end
+      end
+    end
+
+    ['a:.b', '::a::b'].each do |ref|
+      it "does not resolve a qualified name on the form #{ref} against node scope" do
+        expect_the_message_not_to_be("from node") do <<-MANIFEST
+              class c {
+                notify { 'something': message => "$a::b" }
+              }
+              class parent {
+                $not_b = 'from parent'
+              }
+              class a inherits parent { }
+
+              node default {
+                $b = "from node"
+                include a
+                include c
+              }
+          MANIFEST
+        end
+      end
+    end
+
+    it 'resolves a qualified name in class parameter scope' do
+      expect_the_message_to_be('Does it work? Yes!') do <<-PUPPET
+        class a ( 
+          $var1 = 'Does it work?',
+          $var2 = "${a::var1} Yes!"
+        ) { 
+          notify { 'something': message => $var2 }
+        }
+        include a
+        PUPPET
       end
     end
 
@@ -633,7 +695,7 @@ describe "Two step scoping for variables" do
         compile_to_catalog("$var = 'top scope'", enc_node)
       }.to raise_error(
         Puppet::Error,
-        /Cannot reassign variable '\$var' at line 1(\:6)? on node the_node/
+        /Cannot reassign variable '\$var' \(line: 1(, column: 6)?\) on node the_node/
       )
     end
 

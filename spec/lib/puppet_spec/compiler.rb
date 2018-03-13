@@ -7,6 +7,13 @@ module PuppetSpec::Compiler
     Puppet::Parser::Compiler.compile(node).filter { |r| r.virtual? }
   end
 
+  # Does not removed virtual resources in compiled catalog (i.e. keeps unrealized)
+  def compile_to_catalog_unfiltered(string, node = Puppet::Node.new('test'))
+    Puppet[:code] = string
+    # see lib/puppet/indirector/catalog/compiler.rb#filter
+    Puppet::Parser::Compiler.compile(node)
+  end
+
   def compile_to_ral(manifest, node = Puppet::Node.new('test'))
     catalog = compile_to_catalog(manifest, node)
     ral = catalog.to_ral
@@ -27,7 +34,7 @@ module PuppetSpec::Compiler
       catalog.resources.each { |res| yield res }
     end
     transaction = Puppet::Transaction.new(catalog,
-                                         Puppet::Transaction::Report.new("apply"),
+                                         Puppet::Transaction::Report.new,
                                          prioritizer)
     transaction.evaluate
     transaction.report.finalize_report

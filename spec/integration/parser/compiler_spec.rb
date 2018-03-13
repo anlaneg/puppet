@@ -170,6 +170,15 @@ describe Puppet::Parser::Compiler do
       MANIFEST
       expect(catalog).to have_resource("Notify[test]").with_parameter(:message, true)
     end
+
+    it 'makes all server settings available as $settings::all_local hash' do
+      node = Puppet::Node.new("testing")
+      catalog = compile_to_catalog(<<-MANIFEST, node)
+          notify { 'test': message => $settings::all_local['strict'] == 'warning' }
+      MANIFEST
+      expect(catalog).to have_resource("Notify[test]").with_parameter(:message, true)
+    end
+
   end
 
   context 'when working with $server_facts' do
@@ -250,7 +259,7 @@ describe Puppet::Parser::Compiler do
     it "should not create duplicate resources when a class is referenced both directly and indirectly by the node classifier (4792)" do
       node = Puppet::Node.new("testnodex")
       node.classes = ['foo', 'bar']
-      catalog = compile_to_catalog(<<-PP, node)
+      compile_to_catalog(<<-PP, node)
         class foo
         {
           notify { foo_notify: }
@@ -392,7 +401,7 @@ describe Puppet::Parser::Compiler do
 
       it "should not favor local name scope" do
         expect {
-          catalog = compile_to_catalog(<<-PP)
+          compile_to_catalog(<<-PP)
             class experiment {
               class baz {
               }
@@ -494,6 +503,23 @@ describe Puppet::Parser::Compiler do
           }.to raise_error(/Could not find resource 'Notify\[tooth_fairy\]' in parameter '#{meta_param}'/)
         end
       end
+
+      it 'is not reported for virtual resources' do
+        expect { 
+          compile_to_catalog(<<-PP)
+            @notify{ x : require => Notify[tooth_fairy] }
+          PP
+        }.to_not raise_error
+      end
+
+      it 'is reported for a realized virtual resources' do
+        expect { 
+          compile_to_catalog(<<-PP)
+            @notify{ x : require => Notify[tooth_fairy] }
+            realize(Notify['x'])
+          PP
+        }.to raise_error(/Could not find resource 'Notify\[tooth_fairy\]' in parameter 'require'/)
+      end
     end
 
     describe "relationships can be formed" do
@@ -510,8 +536,8 @@ describe Puppet::Parser::Compiler do
             mode => '0755',
           }
         MANIFEST
-        catalog = compile_to_catalog(base_manifest + relationship_code)
 
+        catalog = compile_to_catalog(base_manifest + relationship_code)
         resources = catalog.resources.select { |res| res.type == 'File' }
 
         actual_relationships, actual_subscriptions = [:before, :notify].map do |relation|
@@ -614,6 +640,34 @@ describe Puppet::Parser::Compiler do
           :relationships => [['a', 'b'], ['d', 'c']],
           :subscriptions => [['b', 'c'], ['e', 'd']])
       end
+
+      it 'should close the gap created by an intermediate empty set produced by collection' do
+        source = "file { [aa, bb]: } [File[a], File[aa]] -> Notify<| tag == 'na' |> ~> [File[b], File[bb]]"
+        assert_creates_relationships(source,
+          :relationships => [ ],
+          :subscriptions => [['a', 'b'],['aa', 'b'],['a', 'bb'], ['aa', 'bb']])
+      end
+
+      it 'should close the gap created by empty set followed by empty collection' do
+        source = "file { [aa, bb]: } [File[a], File[aa]] -> [] -> Notify<| tag == 'na' |> ~> [File[b], File[bb]]"
+        assert_creates_relationships(source,
+          :relationships => [ ],
+          :subscriptions => [['a', 'b'],['aa', 'b'],['a', 'bb'], ['aa', 'bb']])
+      end
+
+      it 'should close the gap created by empty collection surrounded by empty sets' do
+        source = "file { [aa, bb]: } [File[a], File[aa]] -> [] -> Notify<| tag == 'na' |> -> [] ~> [File[b], File[bb]]"
+        assert_creates_relationships(source,
+          :relationships => [ ],
+          :subscriptions => [['a', 'b'],['aa', 'b'],['a', 'bb'], ['aa', 'bb']])
+      end
+
+      it 'should close the gap created by several intermediate empty sets produced by collection' do
+        source = "file { [aa, bb]: } [File[a], File[aa]] -> Notify<| tag == 'na' |> -> Notify<| tag == 'na' |> ~> [File[b], File[bb]]"
+        assert_creates_relationships(source,
+          :relationships => [ ],
+          :subscriptions => [['a', 'b'],['aa', 'b'],['a', 'bb'], ['aa', 'bb']])
+      end
     end
 
     context "when dealing with variable references" do
@@ -629,7 +683,7 @@ describe Puppet::Parser::Compiler do
 
       it 'an initial underscore in not ok if elsewhere than last segment' do
         expect do
-          catalog = compile_to_catalog(<<-MANIFEST)
+          compile_to_catalog(<<-MANIFEST)
             class a { $_a = 10}
             include a
             notify { 'test': message => $_a::_a }
@@ -715,7 +769,7 @@ describe Puppet::Parser::Compiler do
 
       it 'accepts anything when parameters are untyped' do
         expect do
-          catalog = compile_to_catalog(<<-MANIFEST)
+          compile_to_catalog(<<-MANIFEST)
           define foo($a, $b, $c) { }
           foo { 'test': a => String, b=>10, c=>undef }
           MANIFEST
@@ -724,7 +778,7 @@ describe Puppet::Parser::Compiler do
 
       it 'denies non type compliant arguments' do
         expect do
-          catalog = compile_to_catalog(<<-MANIFEST)
+          compile_to_catalog(<<-MANIFEST)
             define foo(Integer $x) { }
             foo { 'test': x =>'say friend' }
           MANIFEST
@@ -733,7 +787,7 @@ describe Puppet::Parser::Compiler do
 
       it 'denies undef for a non-optional type' do
         expect do
-          catalog = compile_to_catalog(<<-MANIFEST)
+          compile_to_catalog(<<-MANIFEST)
             define foo(Integer $x) { }
             foo { 'test': x => undef }
           MANIFEST
@@ -742,7 +796,7 @@ describe Puppet::Parser::Compiler do
 
       it 'denies non type compliant default argument' do
         expect do
-          catalog = compile_to_catalog(<<-MANIFEST)
+          compile_to_catalog(<<-MANIFEST)
             define foo(Integer $x = 'pow') { }
             foo { 'test':  }
           MANIFEST
@@ -751,7 +805,7 @@ describe Puppet::Parser::Compiler do
 
       it 'denies undef as the default for a non-optional type' do
         expect do
-          catalog = compile_to_catalog(<<-MANIFEST)
+          compile_to_catalog(<<-MANIFEST)
             define foo(Integer $x = undef) { }
             foo { 'test':  }
           MANIFEST
@@ -772,7 +826,7 @@ describe Puppet::Parser::Compiler do
 
       it 'uses infer_set when reporting type mismatch' do
         expect do
-          catalog = compile_to_catalog(<<-MANIFEST)
+          compile_to_catalog(<<-MANIFEST)
             define foo(Struct[{b => Integer, d=>String}] $a) { }
             foo{ bar: a => {b => 5, c => 'stuff'}}
           MANIFEST
@@ -801,7 +855,7 @@ describe Puppet::Parser::Compiler do
 
       it 'accepts anything when parameters are untyped' do
         expect do
-          catalog = compile_to_catalog(<<-MANIFEST)
+          compile_to_catalog(<<-MANIFEST)
             class foo($a, $b, $c) { }
             class { 'foo': a => String, b=>10, c=>undef }
           MANIFEST
@@ -810,7 +864,7 @@ describe Puppet::Parser::Compiler do
 
       it 'denies non type compliant arguments' do
         expect do
-          catalog = compile_to_catalog(<<-MANIFEST)
+          compile_to_catalog(<<-MANIFEST)
             class foo(Integer $x) { }
             class { 'foo': x =>'say friend' }
           MANIFEST
@@ -819,7 +873,7 @@ describe Puppet::Parser::Compiler do
 
       it 'denies undef for a non-optional type' do
         expect do
-          catalog = compile_to_catalog(<<-MANIFEST)
+          compile_to_catalog(<<-MANIFEST)
             class foo(Integer $x) { }
             class { 'foo': x => undef }
           MANIFEST
@@ -828,7 +882,7 @@ describe Puppet::Parser::Compiler do
 
       it 'denies non type compliant default argument' do
         expect do
-          catalog = compile_to_catalog(<<-MANIFEST)
+          compile_to_catalog(<<-MANIFEST)
             class foo(Integer $x = 'pow') { }
             class { 'foo':  }
           MANIFEST
@@ -837,11 +891,29 @@ describe Puppet::Parser::Compiler do
 
       it 'denies undef as the default for a non-optional type' do
         expect do
-          catalog = compile_to_catalog(<<-MANIFEST)
+          compile_to_catalog(<<-MANIFEST)
             class foo(Integer $x = undef) { }
             class { 'foo':  }
           MANIFEST
         end.to raise_error(/Class\[Foo\]: parameter 'x' expects an Integer value, got Undef/)
+      end
+
+      it 'denies a regexp (rich data) argument given to class String parameter (even if later encoding of it is a string)' do
+        expect do
+          compile_to_catalog(<<-MANIFEST)
+            class foo(String $x) { }
+            class { 'foo':  x => /I am a regexp and I don't want to be a String/}
+          MANIFEST
+        end.to raise_error(/Class\[Foo\]: parameter 'x' expects a String value, got Regexp/)
+      end
+
+      it 'denies a regexp (rich data) argument given to define String parameter (even if later encoding of it is a string)' do
+        expect do
+          compile_to_catalog(<<-MANIFEST)
+            define foo(String $x) { }
+            foo { 'foo':  x => /I am a regexp and I don't want to be a String/}
+          MANIFEST
+        end.to raise_error(/Foo\[foo\]: parameter 'x' expects a String value, got Regexp/)
       end
 
       it 'accepts a Resource as a Type' do
@@ -1090,12 +1162,36 @@ describe Puppet::Parser::Compiler do
     it 'errors when an alias cannot be found when relationship is formed with -> operator' do
       node = Puppet::Node.new("testnodex")
       expect {
-        catalog = compile_to_catalog(<<-PP, node)
+        compile_to_catalog(<<-PP, node)
           notify { 'actual_2':  }
           notify { 'actual_1': alias => 'alias_1' }
           Notify[actual_2] -> Notify[alias_2]
         PP
       }.to raise_error(/Could not find resource 'Notify\[alias_2\]'/)
     end
+  end
+
+  describe 'the compiler when using collection and override' do
+    include PuppetSpec::Compiler
+
+    it 'allows an override when there is a default present' do
+      catalog = compile_to_catalog(<<-MANIFEST)
+        Package { require => Class['bar'] }
+        class bar { }
+        class foo {
+          package { 'python': }
+          package { 'pip': require => Package['python'] }
+
+          Package <| title == 'pip' |> {
+            name     => "python-pip",
+            category => undef,
+          }
+        }
+        include foo
+        include bar
+      MANIFEST
+      expect(catalog.resource('Package', 'pip')[:require].to_s).to eql('Package[python]')
+    end
+
   end
 end

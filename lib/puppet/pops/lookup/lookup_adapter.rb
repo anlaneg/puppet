@@ -48,7 +48,6 @@ class LookupAdapter < DataAdapter
 
     key = LookupKey.new(key)
     lookup_invocation.lookup(key, key.module_name) do
-      merge_explained = false
       if lookup_invocation.only_explain_options?
         catch(:no_such_key) { do_lookup(LookupKey::LOOKUP_OPTIONS, lookup_invocation, HASH) }
         nil
@@ -68,7 +67,8 @@ class LookupAdapter < DataAdapter
   end
 
   def lookup_global(key, lookup_invocation, merge_strategy)
-    terminus = Puppet[:data_binding_terminus]
+    # hiera_xxx will always use global_provider regardless of data_binding_terminus setting
+    terminus = lookup_invocation.hiera_xxx_call? ? :hiera : Puppet[:data_binding_terminus]
     case terminus
     when :hiera, 'hiera'
       provider = global_provider(lookup_invocation)
@@ -371,7 +371,7 @@ class LookupAdapter < DataAdapter
         mp = nil
       elsif mp_config.version >= 5
         unless provider_name.nil? || Puppet[:strict] == :off
-          Puppet.warn_once(:deprecation, "metadata.json#data_provider-#{module_name}",
+          Puppet.warn_once('deprecations', "metadata.json#data_provider-#{module_name}",
             _("Defining \"data_provider\": \"%{name}\" in metadata.json is deprecated. It is ignored since a '%{config}' with version >= 5 is present") % { name: provider_name, config: HieraConfig::CONFIG_FILE_NAME }, mod.metadata_file)
         end
         provider_name = nil
@@ -382,9 +382,9 @@ class LookupAdapter < DataAdapter
       mp
     else
       unless Puppet[:strict] == :off
-        msg = _("Defining \"data_provider\": \"%{name}\" in metadata.json is deprecated") % { name: provider_name }
-        msg += _(". A '%{config}' file should be used instead") % { config: HieraConfig::CONFIG_FILE_NAME } if mp.nil?
-        Puppet.warn_once(:deprecation, "metadata.json#data_provider-#{module_name}", msg, mod.metadata_file)
+        msg = _("Defining \"data_provider\": \"%{name}\" in metadata.json is deprecated.") % { name: provider_name }
+        msg += " " + _("A '%{hiera_config}' file should be used instead") % { hiera_config: HieraConfig::CONFIG_FILE_NAME } if mp.nil?
+        Puppet.warn_once('deprecations', "metadata.json#data_provider-#{module_name}", msg, mod.metadata_file)
       end
 
       case provider_name
@@ -420,11 +420,11 @@ class LookupAdapter < DataAdapter
         ep = nil
       elsif ep_config.version >= 5
         unless provider_name.nil? || Puppet[:strict] == :off
-          Puppet.warn_once(:deprecation, 'environment.conf#data_provider',
+          Puppet.warn_once('deprecations', 'environment.conf#data_provider',
             _("Defining environment_data_provider='%{provider_name}' in environment.conf is deprecated") % { provider_name: provider_name }, env_path + 'environment.conf')
 
           unless provider_name == 'hiera'
-            Puppet.warn_once(:deprecation, 'environment.conf#data_provider_overridden',
+            Puppet.warn_once('deprecations', 'environment.conf#data_provider_overridden',
               _("The environment_data_provider='%{provider_name}' setting is ignored since '%{config_path}' version >= 5") % { provider_name: provider_name, config_path: config_path }, env_path + 'environment.conf')
           end
         end
@@ -436,9 +436,9 @@ class LookupAdapter < DataAdapter
       ep
     else
       unless Puppet[:strict] == :off
-        msg = _("Defining environment_data_provider='%{provider_name}' in environment.conf is deprecated") % { provider_name: provider_name }
-        msg += _(". A '%{config}' file should be used instead") % { config: HieraConfig::CONFIG_FILE_NAME } if ep.nil?
-        Puppet.warn_once(:deprecation, 'environment.conf#data_provider', msg, env_path + 'environment.conf')
+        msg = _("Defining environment_data_provider='%{provider_name}' in environment.conf is deprecated.") % { provider_name: provider_name }
+        msg += " " + _("A '%{hiera_config}' file should be used instead") % { hiera_config: HieraConfig::CONFIG_FILE_NAME } if ep.nil?
+        Puppet.warn_once('deprecations', 'environment.conf#data_provider', msg, env_path + 'environment.conf')
       end
 
       case provider_name

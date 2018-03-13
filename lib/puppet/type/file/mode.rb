@@ -13,6 +13,10 @@ module Puppet
       notation. This value **must** be specified as a string; do not use
       un-quoted numbers to represent file modes.
 
+      If the mode is omitted (or explicitly set to `undef`), Puppet does not
+      enforce permissions on existing files and creates new files with
+      permissions of `0644`.
+
       The `file` type uses traditional Unix permission schemes and translates
       them to equivalent permissions for systems which represent permissions
       differently, including Windows. For detailed ACL controls on Windows,
@@ -20,7 +24,7 @@ module Puppet
       [the puppetlabs/acl module.](https://forge.puppetlabs.com/puppetlabs/acl)
 
       Numeric modes should use the standard octal notation of
-      `<SETUID/SETGID/STICKY><OWNER><GROUP><OTHER>` (e.g. '0644').
+      `<SETUID/SETGID/STICKY><OWNER><GROUP><OTHER>` (for example, "0644").
 
       * Each of the "owner," "group," and "other" digits should be a sum of the
         permissions for that class of users, where read = 4, write = 2, and
@@ -50,7 +54,7 @@ module Puppet
           * g (group's current permissions)
           * o (other's current permissions)
 
-      Thus, mode `0664` could be represented symbolically as either `a=r,ug+w`
+      Thus, mode `"0664"` could be represented symbolically as either `a=r,ug+w`
       or `ug=rw,o=r`.  However, symbolic modes are more expressive than numeric
       modes: a mode only affects the specified bits, so `mode => 'ug+w'` will
       set the user and group write bits, without affecting any other bits.
@@ -66,8 +70,8 @@ module Puppet
         `FILE_GENERIC_WRITE`, and `FILE_GENERIC_EXECUTE` access rights; a
         file's owner always has the `FULL_CONTROL` right
       * "Other" users can't have any permissions a file's group lacks,
-        and its group can't have any permissions its owner lacks; that is, 0644
-        is an acceptable mode, but 0464 is not.
+        and its group can't have any permissions its owner lacks; that is, "0644"
+        is an acceptable mode, but "0464" is not.
     EOT
 
     validate do |value|
@@ -157,7 +161,7 @@ module Puppet
     end
 
     def should_to_s(should_value)
-      should_value.rjust(4, "0")
+      "'#{should_value.rjust(4, '0')}'"
     end
 
     def is_to_s(currentvalue)
@@ -166,7 +170,7 @@ module Puppet
         # present to absent the mode will have a value of `:absent`.
         super
       else
-        currentvalue.rjust(4, "0")
+        "'#{currentvalue.rjust(4, '0')}'"
       end
     end
   end

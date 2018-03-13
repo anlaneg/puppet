@@ -1,10 +1,12 @@
 #! /usr/bin/env ruby
 require 'spec_helper'
+require 'puppet_spec/compiler'
 
 require 'puppet/transaction'
 
 describe Puppet::Transaction do
   include PuppetSpec::Files
+  include PuppetSpec::Compiler
 
   before do
     Puppet::Util::Storage.stubs(:store)
@@ -17,11 +19,11 @@ describe Puppet::Transaction do
   end
 
   def touch_path
-    Puppet.features.microsoft_windows? ? "#{ENV['windir']}/system32" : "/usr/bin:/bin"
+    Puppet.features.microsoft_windows? ? "#{ENV['windir']}\\system32" : "/usr/bin:/bin"
   end
 
   def usr_bin_touch(path)
-    Puppet.features.microsoft_windows? ? "#{ENV['windir']}/system32/cmd.exe /c \"type NUL >> \"#{path}\"\"" : "/usr/bin/touch #{path}"
+    Puppet.features.microsoft_windows? ? "#{ENV['windir']}\\system32\\cmd.exe /c \"type NUL >> \"#{path}\"\"" : "/usr/bin/touch #{path}"
   end
 
   def touch(path)
@@ -144,7 +146,6 @@ describe Puppet::Transaction do
   # Verify that one component requiring another causes the contained
   # resources in the requiring component to get refreshed.
   it "should propagate events from a contained resource through its container to its dependent container's contained resources" do
-    transaction = nil
     file = Puppet::Type.type(:file).new :path => tmpfile("event_propagation"), :ensure => :present
     execfile = File.join(tmpdir("exec_event"), "exectestingness2")
     exec = Puppet::Type.type(:exec).new :command => touch(execfile), :path => ENV['PATH']
@@ -233,7 +234,7 @@ describe Puppet::Transaction do
     expect(Puppet::FileSystem.exist?(path)).not_to be_truthy
   end
 
-  it "should not let one failed refresh result in other refreshes failing" do
+  it "one failed refresh should propagate its failure to dependent refreshes" do
     path = tmpfile("path")
     newfile = tmpfile("file")
       file = Puppet::Type.type(:file).new(
@@ -263,7 +264,7 @@ describe Puppet::Transaction do
 
     catalog = mk_catalog(file, exec1, exec2)
     catalog.apply
-    expect(Puppet::FileSystem.exist?(newfile)).to be_truthy
+    expect(Puppet::FileSystem.exist?(newfile)).to be_falsey
   end
 
   # Ensure when resources have been generated with eval_generate that event
@@ -337,6 +338,37 @@ describe Puppet::Transaction do
         expect(Puppet::FileSystem.exist?(file1)).to be_truthy
         expect(Puppet::FileSystem.exist?(file2)).to be_truthy
       end
+    end
+
+    it "should propagate events correctly from a tagged container when running with tags" do
+      file1 = tmpfile("original_tag")
+      file2 = tmpfile("tag_propagation")
+      command1 = usr_bin_touch(file1)
+      command2 = usr_bin_touch(file2)
+      manifest = <<-"MANIFEST"
+        class foo {
+          exec { 'notify test':
+            command     => '#{command1}',
+            refreshonly => true,
+          }
+        }
+
+        class test {
+          include foo
+
+          exec { 'test':
+            command => '#{command2}',
+            notify  => Class['foo'],
+          }
+        }
+
+        include test
+      MANIFEST
+
+      Puppet[:tags] = 'test'
+      apply_compiled_manifest(manifest)
+      expect(Puppet::FileSystem.exist?(file1)).to be_truthy
+      expect(Puppet::FileSystem.exist?(file2)).to be_truthy
     end
   end
 

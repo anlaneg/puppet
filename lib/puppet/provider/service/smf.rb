@@ -25,8 +25,9 @@ Puppet::Type.type(:service).provide :smf, :parent => :base do
 
   def setupservice
       if resource[:manifest]
-        [command(:svcs), "-l", @resource[:name]]
-        if $CHILD_STATUS.exitstatus == 1
+        begin
+          svcs("-l", @resource[:name])
+        rescue Puppet::ExecutionFailure
           Puppet.notice "Importing #{@resource[:manifest]} for #{@resource[:name]}"
           svccfg :import, resource[:manifest]
         end
@@ -107,6 +108,8 @@ Puppet::Type.type(:service).provide :smf, :parent => :base do
   end
 
   def stop
+    # Don't try to stop non-existing services (PUP-8167)
+    return if self.status == :absent
     # Wait for the service to actually stop before returning.
     super
     self.wait('offline', 'disabled', 'uninitialized')

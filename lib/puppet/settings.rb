@@ -30,6 +30,7 @@ class Puppet::Settings
   require 'puppet/settings/value_translator'
   require 'puppet/settings/environment_conf'
   require 'puppet/settings/server_list_setting'
+  require 'puppet/settings/certificate_revocation_setting'
 
   # local reference for convenience
   PuppetOptionParser = Puppet::Util::CommandLine::PuppetOptionParser
@@ -255,7 +256,7 @@ class Puppet::Settings
   end
 
   def initialize_global_settings(args = [])
-    raise Puppet::DevError, "Attempting to initialize global default settings more than once!" if global_defaults_initialized?
+    raise Puppet::DevError, _("Attempting to initialize global default settings more than once!") if global_defaults_initialized?
 
     # The first two phases of the lifecycle of a puppet application are:
     # 1) Parse the command line options and handle any of them that are
@@ -369,7 +370,7 @@ class Puppet::Settings
       begin
         setting.handle(self.value(setting.name))
       rescue InterpolationError => err
-        raise InterpolationError, err, err.backtrace unless options[:ignore_interpolation_dependency_errors]
+        raise InterpolationError, err.message, err.backtrace unless options[:ignore_interpolation_dependency_errors]
         #swallow. We're not concerned if we can't call hooks because dependencies don't exist yet
         #we'll get another chance after application defaults are initialized
       end
@@ -670,7 +671,8 @@ class Puppet::Settings
       :symbolic_enum   => SymbolicEnumSetting,
       :priority   => PrioritySetting,
       :autosign   => AutosignSetting,
-      :server_list => ServerListSetting
+      :server_list => ServerListSetting,
+      :certificate_revocation => CertificateRevocationSetting
   }
 
   # Create a new setting.  The value is passed in because it's used to determine
@@ -684,7 +686,7 @@ class Puppet::Settings
 
     if type = hash[:type]
       unless klass = SETTING_TYPES[type]
-        raise ArgumentError, "Invalid setting type '#{type}'"
+        raise ArgumentError, _("Invalid setting type '%{type}'") % { type: type }
       end
       hash.delete(:type)
     else
@@ -828,7 +830,7 @@ class Puppet::Settings
     when :environment
       ValuesFromEnvironmentConf.new(source.name)
     else
-      raise(Puppet::DevError, "Unknown searchpath case: #{source.type} for the #{source} settings path element.")
+      raise Puppet::DevError, _("Unknown searchpath case: %{source_type} for the %{source} settings path element.") % { source_type: source.type, source: source}
     end
   end
 
@@ -890,16 +892,16 @@ class Puppet::Settings
     section = section.to_sym
     call = []
     defs.each do |name, hash|
-      raise ArgumentError, "setting definition for '#{name}' is not a hash!" unless hash.is_a? Hash
+      raise ArgumentError, _("setting definition for '%{name}' is not a hash!") % { name: name } unless hash.is_a? Hash
 
       name = name.to_sym
       hash[:name] = name
       hash[:section] = section
-      raise ArgumentError, "Setting #{name} is already defined" if @config.include?(name)
+      raise ArgumentError, _("Setting %{name} is already defined") % { name: name } if @config.include?(name)
       tryconfig = newsetting(hash)
       if short = tryconfig.short
         if other = @shortnames[short]
-          raise ArgumentError, "Setting #{other.name} is already using short name '#{short}'"
+          raise ArgumentError, _("Setting %{name} is already using short name '%{short}'") % { name: other.name, short: short }
         end
         @shortnames[short] = tryconfig
       end
@@ -1156,9 +1158,14 @@ Generated on #{Time.now}.
       msg << " #{ref}" if ref
       Puppet.deprecation_warning(msg)
     when setting.completely_deprecated?
-      Puppet.deprecation_warning("Setting #{name} is deprecated. #{ref}", "setting-#{name}")
+      message = _("Setting %{name} is deprecated.") % { name: name }
+      message += " #{ref}"
+      Puppet.deprecation_warning(message, "setting-#{name}")
     when setting.allowed_on_commandline?
-      Puppet.deprecation_warning("Setting #{name} is deprecated in puppet.conf. #{ref}", "puppet-conf-setting-#{name}")
+      #TRANSLATORS 'puppet.conf' is a file name and should not be translated
+      message = _("Setting %{name} is deprecated in puppet.conf.") % { name: name }
+      message += " #{ref}"
+      Puppet.deprecation_warning(message, "puppet-conf-setting-#{name}")
     end
   end
 
@@ -1289,30 +1296,42 @@ Generated on #{Time.now}.
     # @api public
     def interpolate(name)
       setting = @defaults[name]
+      return nil unless setting
 
-      if setting
-        val = lookup(name)
-        # if we interpolate code, all hell breaks loose.
-        if name == :code
-          val
-        else
-          # Convert it if necessary
-          begin
-            val = convert(val, name)
-          rescue InterpolationError => err
-            # This happens because we don't have access to the param name when the
-            # exception is originally raised, but we want it in the message
-            raise InterpolationError, "Error converting value for param '#{name}': #{err}", err.backtrace
-          end
+      lookup_and_convert(name) do |val|
+        setting.munge(val)
+      end
+    end
 
-          setting.munge(val)
-        end
-      else
-        nil
+    def print(name)
+      setting = @defaults[name]
+      return nil unless setting
+
+      lookup_and_convert(name) do |val|
+        setting.print(val)
       end
     end
 
     private
+
+    def lookup_and_convert(name, &block)
+      val = lookup(name)
+      # if we interpolate code, all hell breaks loose.
+      if name == :code
+        val
+      else
+        # Convert it if necessary
+        begin
+          val = convert(val, name)
+        rescue InterpolationError => err
+          # This happens because we don't have access to the param name when the
+          # exception is originally raised, but we want it in the message
+          raise InterpolationError, _("Error converting value for param '%{name}': %{detail}") % { name: name, detail: err }, err.backtrace
+        end
+
+        yield val
+      end
+    end
 
     def convert(value, setting_name)
       case value
@@ -1331,7 +1350,7 @@ Generated on #{Time.now}.
             elsif !(pval = interpolate(varname.to_sym)).nil?
               pval
             else
-              raise InterpolationError, "Could not find value for #{expression}"
+              raise InterpolationError, _("Could not find value for %{expression}") % { expression: expression }
             end
           else
             failed_environment_interpolation = true
@@ -1340,7 +1359,9 @@ Generated on #{Time.now}.
           interpolated_expression
         end
         if failed_environment_interpolation
-          Puppet.warning("You cannot interpolate $environment within '#{setting_name}' when using directory environments.  Its value will remain #{interpolated_value}.")
+          #TRANSLATORS '$environment' is a Puppet specific variable and should not be translated
+          Puppet.warning(_("You cannot interpolate $environment within '%{setting_name}' when using directory environments.") % { setting_name: setting_name } +
+                             ' ' + _("Its value will remain %{value}.") % { value: interpolated_value })
         end
         interpolated_value
       else
@@ -1371,8 +1392,7 @@ Generated on #{Time.now}.
       default = @defaults[name]
 
       if !default
-        raise ArgumentError,
-          "Attempt to assign a value to unknown setting #{name.inspect}"
+        raise ArgumentError, _("Attempt to assign a value to unknown setting %{name}") % { name: name.inspect }
       end
 
       # This little exception-handling dance ensures that a hook is
@@ -1389,7 +1409,7 @@ Generated on #{Time.now}.
         @values[name] = old_value
         raise e
       end
-     end
+    end
 
     def inspect
       %Q{<#{self.class}:#{self.object_id} @name="#{@name}" @values="#{@values}">}

@@ -31,7 +31,11 @@ Puppet::Type.type(:package).provide :pip,
     packages = []
     pip_cmd = self.pip_cmd
     return [] unless pip_cmd
-    execpipe "#{pip_cmd} freeze" do |process|
+    command = [pip_cmd, 'freeze']
+    if Puppet::Util::Package.versioncmp(self.pip_version, '8.1.0') >= 0 # a >= b
+      command << '--all'
+    end
+    execpipe command do |process|
       process.collect do |line|
         next unless options = parse(line)
         packages << new(options)
@@ -40,7 +44,8 @@ Puppet::Type.type(:package).provide :pip,
 
     # Pip can also upgrade pip, but it's not listed in freeze so need to special case it
     # Pip list would also show pip installed version, but "pip list" doesn't exist for older versions of pip (E.G v1.0)
-    if version = self.pip_version
+    # Not needed when "pip freeze --all" is available
+    if Puppet::Util::Package.versioncmp(self.pip_version, '8.1.0') == -1 && version = self.pip_version
       packages << new({:ensure => version, :name => File.basename(pip_cmd), :provider => name})
     end
 
@@ -48,7 +53,11 @@ Puppet::Type.type(:package).provide :pip,
   end
 
   def self.cmd
-    ["pip", "pip-python"]
+    if Puppet.features.microsoft_windows?
+      ["pip.exe"]
+    else
+      ["pip", "pip-python"]
+    end
   end
 
   def self.pip_cmd
@@ -108,7 +117,7 @@ Puppet::Type.type(:package).provide :pip,
         args << @resource[:name]
       end
     end
-    lazy_pip *args
+    lazy_pip(*args)
   end
 
   # Uninstall a package.  Uninstall won't work reliably on Debian/Ubuntu
@@ -126,7 +135,7 @@ Puppet::Type.type(:package).provide :pip,
   # try to teach it and if even that fails, raise the error.
   private
   def lazy_pip(*args)
-    pip *args
+    pip(*args)
   rescue NoMethodError => e
     # Ensure pip can upgrade pip, which usually puts pip into a new path /usr/local/bin/pip (compared to /usr/bin/pip)
     # The path to pip needs to be looked up again in the subsequent request. Using the preferred approach as noted
@@ -136,7 +145,7 @@ Puppet::Type.type(:package).provide :pip,
     # to search for them using the PATH variable.
     if pathname = self.class.cmd.map { |c| which(c) }.find { |c| c != nil }
       self.class.commands :pip => File.basename(pathname)
-      pip *args
+      pip(*args)
     else
       raise e, "Could not locate command #{self.class.cmd.join(' and ')}.", e.backtrace
     end

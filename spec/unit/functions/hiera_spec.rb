@@ -182,7 +182,6 @@ describe 'when calling' do
     result = nil
     Puppet[:code] = 'undef'
     Puppet::Util::Log.with_destination(Puppet::Test::LogCollector.new(logs)) do
-      compiler.topscope['environment'] = 'test'
       compiler.compile do |catalog|
         result = yield(compiler.topscope)
         catalog
@@ -292,6 +291,11 @@ describe 'when calling' do
       it 'should find data in module' do
         expect(func('mod::c')).to eql('mod::c (from module)')
       end
+    end
+
+    it 'should not be disabled by data_binding_terminus setting' do
+      Puppet[:data_binding_terminus] = 'none'
+      expect(func('a')).to eql('first a')
     end
   end
 

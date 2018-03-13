@@ -11,7 +11,7 @@ require 'puppet/error'
 # Puppet API because it used by external tools such as mcollective.
 #
 # For more information, please see docs on the website.
-#  http://links.puppetlabs.com/agent_lockfiles
+#  http://links.puppet.com/agent_lockfiles
 module Puppet::Agent::Locker
   # Yield if we get a lock, else raise Puppet::LockError. Return
   # value of block yielded.
@@ -29,11 +29,12 @@ module Puppet::Agent::Locker
 
   # @deprecated
   def running?
-    Puppet.deprecation_warning _(<<-ENDHEREDOC)
-Puppet::Agent::Locker.running? is deprecated as it is inherently unsafe.
-The only safe way to know if the lock is locked is to try lock and perform some
-action and then handle the LockError that may result.
-ENDHEREDOC
+    #TRANSLATORS 'Puppet::Agent::Locker.running?' is a method name and should not be translated
+    message = _('Puppet::Agent::Locker.running? is deprecated as it is inherently unsafe.')
+    #TRANSLATORS 'LockError' should not be translated
+    message += ' ' + _('The only safe way to know if the lock is locked is to try lock and perform some '\
+                       'action and then handle the LockError that may result.')
+    Puppet.deprecation_warning(message)
     lockfile.locked?
   end
 

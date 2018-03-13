@@ -151,6 +151,7 @@ describe provider_class, :if => Puppet.features.posix? do
     end
 
     it "should import the manifest if service is missing" do
+      @provider.expects(:svcs).with('-l', '/system/myservice').raises(Puppet::ExecutionFailure, "Exited 1")
       @provider.expects(:svccfg).with(:import, "/tmp/myservice.xml")
       @provider.expects(:texecute).with(:start, ["/usr/sbin/svcadm", :enable, '-rs', "/system/myservice"], true)
       @provider.expects(:wait).with('online')
@@ -159,6 +160,7 @@ describe provider_class, :if => Puppet.features.posix? do
     end
 
     it "should handle failures if importing a manifest" do
+      @provider.expects(:svcs).with('-l', '/system/myservice').raises(Puppet::ExecutionFailure, "Exited 1")
       @provider.expects(:svccfg).raises(Puppet::ExecutionFailure.new("can't svccfg import"))
       expect { @provider.start }.to raise_error(Puppet::Error, "Cannot config /system/myservice to enable it: can't svccfg import")
     end
@@ -166,12 +168,14 @@ describe provider_class, :if => Puppet.features.posix? do
 
   describe "when stopping" do
     it "should execute external command 'svcadm disable /system/myservice'" do
+      @provider.stubs(:status).returns :running
       @provider.expects(:texecute).with(:stop, ["/usr/sbin/svcadm", :disable, '-s', "/system/myservice"], true)
       @provider.expects(:wait).with('offline', 'disabled', 'uninitialized')
       @provider.stop
     end
 
     it "should error if timeout occurs while stopping the service" do
+      @provider.stubs(:status).returns :running
       @provider.expects(:texecute).with(:stop, ["/usr/sbin/svcadm", :disable, '-s', "/system/myservice"], true)
       Timeout.expects(:timeout).with(60).raises(Timeout::Error)
       expect { @provider.stop }.to raise_error Puppet::Error, ('Timed out waiting for /system/myservice to transition states')

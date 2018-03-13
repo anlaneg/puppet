@@ -24,7 +24,7 @@ class Puppet::SSL::Base
   end
 
   def self.wrapped_class
-    raise(Puppet::DevError, "#{self} has not declared what class it wraps") unless defined?(@wrapped_class)
+    raise(Puppet::DevError, _("%{name} has not declared what class it wraps") % { name: self }) unless defined?(@wrapped_class)
     @wrapped_class
   end
 
@@ -40,7 +40,7 @@ class Puppet::SSL::Base
   end
 
   def generate
-    raise Puppet::DevError, "#{self.class} did not override 'generate'"
+    raise Puppet::DevError, _("%{class_name} did not override 'generate'") % { class_name: self.class }
   end
 
   def initialize(name)
@@ -64,8 +64,13 @@ class Puppet::SSL::Base
 
   # Create an instance of our Puppet::SSL::* class using a given instance of the wrapped class
   def self.from_instance(instance, name = nil)
-    raise ArgumentError, "Object must be an instance of #{wrapped_class}, #{instance.class} given" unless instance.is_a? wrapped_class
-    raise ArgumentError, "Name must be supplied if it cannot be determined from the instance" if name.nil? and !instance.respond_to?(:subject)
+    unless instance.is_a?(wrapped_class)
+      raise ArgumentError, _("Object must be an instance of %{class_name}, %{actual_class} given") %
+          { class_name: wrapped_class, actual_class: instance.class }
+    end
+    if name.nil? and !instance.respond_to?(:subject)
+      raise ArgumentError, _("Name must be supplied if it cannot be determined from the instance")
+    end
 
     name ||= name_from_subject(instance.subject)
     result = new(name)

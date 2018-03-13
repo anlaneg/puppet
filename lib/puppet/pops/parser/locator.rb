@@ -43,11 +43,7 @@ class Locator
   def char_offset(byte_offset)
   end
 
-  # Returns the length measured in number of characters from the given start and end reported offset
-  def char_length(offset, end_offset)
-  end
-
-  # Returns the length measured in number of characters from the given start and end byte offseta
+  # Returns the length measured in number of characters from the given start and end byte offset
   def char_length(offset, end_offset)
   end
 
@@ -159,13 +155,9 @@ class Locator
     end
   end
 
-  private
-
   class AbstractLocator < Locator
     attr_accessor :line_index
     attr_accessor :string
-    attr_accessor :prev_offset
-    attr_accessor :prev_line
     attr_reader   :string
     attr_reader   :file
 
@@ -255,19 +247,19 @@ class Locator
 
     # Returns the line number (first line is 1) for the given offset
     def line_for_offset(offset)
-      if prev_offset == offset
+      if @prev_offset == offset
         # use cache
-        return prev_line
+        return @prev_line
       end
       if line_nbr = ary_bsearch_i(line_index, offset)
         # cache
-        prev_offset = offset
-        prev_line = line_nbr
+        @prev_offset = offset
+        @prev_line = line_nbr
         return line_nbr
       end
       # If not found it is after last
       # clear cache
-      prev_offset = prev_line = nil
+      @prev_offset = @prev_line = nil
       return line_index.size
     end
   end
@@ -328,7 +320,7 @@ class Locator
       string.byteslice(0, byte_offset).length
     end
 
-    # Returns the length measured in number of characters from the given start and end byte offseta
+    # Returns the length measured in number of characters from the given start and end byte offset
     def char_length(offset, end_offset)
       string.byteslice(offset, end_offset - offset).length
     end

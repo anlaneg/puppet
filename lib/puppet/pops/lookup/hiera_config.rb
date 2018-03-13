@@ -81,7 +81,7 @@ class HieraConfig
 
   def self.v4_function_config(config_root, function_name, owner)
     unless Puppet[:strict] == :off
-      Puppet.warn_once(:deprecation, 'legacy_provider_function',
+      Puppet.warn_once('deprecations', 'legacy_provider_function',
         _("Using of legacy data provider function '%{function_name}'. Please convert to a 'data_hash' function") % { function_name: function_name })
     end
     HieraConfigV5.new(config_root, nil,
@@ -106,7 +106,9 @@ class HieraConfig
   def self.symkeys_to_string(struct)
     case(struct)
     when Hash
-      Hash[struct.map { |k,v| [k.to_s, symkeys_to_string(v)] }]
+      map = {}
+      struct.each_pair {|k,v| map[ k.is_a?(Symbol) ? k.to_s : k] = symkeys_to_string(v) }
+      map
     when Array
       struct.map { |v| symkeys_to_string(v) }
     else
@@ -421,7 +423,7 @@ class HieraConfigV3 < HieraConfig
 
   def validate_config(config, owner)
     unless Puppet[:strict] == :off
-      Puppet.warn_once(:deprecation, 'hiera.yaml',
+      Puppet.warn_once('deprecations', 'hiera.yaml',
         _("%{config_path}: Use of 'hiera.yaml' version 3 is deprecated. It should be converted to version 5") % { config_path: @config_path }, config_path.to_s)
     end
     config[KEY_VERSION] ||= 3
@@ -521,7 +523,7 @@ class HieraConfigV4 < HieraConfig
 
   def validate_config(config, owner)
     unless Puppet[:strict] == :off
-      Puppet.warn_once(:deprecation, 'hiera.yaml',
+      Puppet.warn_once('deprecations', 'hiera.yaml',
         _("%{config_path}: Use of 'hiera.yaml' version 4 is deprecated. It should be converted to version 5") % { config_path: @config_path }, config_path.to_s)
     end
     config[KEY_DATADIR] ||= 'data'
@@ -541,8 +543,8 @@ class HieraConfigV5 < HieraConfig
     tf = Types::TypeFactory
     nes_t = Types::PStringType::NON_EMPTY
 
-    # Need alias here to avoid ridiculously long regexp burp in case of validation errors.
-    uri_t = Pcore::TYPE_URI_ALIAS
+    # Validated using Ruby URI implementation
+    uri_t = Types::PStringType::NON_EMPTY
 
     # The option name must start with a letter and end with a letter or digit. May contain underscore and dash.
     option_name_t = tf.pattern(/\A[A-Za-z](:?[0-9A-Za-z_-]*[0-9A-Za-z])?\z/)
@@ -583,7 +585,7 @@ class HieraConfigV5 < HieraConfig
 
   def create_configured_data_providers(lookup_invocation, parent_data_provider, use_default_hierarchy)
     defaults = @config[KEY_DEFAULTS] || EMPTY_HASH
-    datadir = defaults[KEY_DATADIR] || _('data')
+    datadir = defaults[KEY_DATADIR] || 'data'
 
     # Hashes enumerate their values in the order that the corresponding keys were inserted so it's safe to use
     # a hash for the data_providers.

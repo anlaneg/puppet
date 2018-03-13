@@ -107,10 +107,10 @@ Puppet::Type.newtype(:scheduled_task) do
             minutes_interval.
       * For `daily` triggers:
           * `every` --- How often the task should run, as a number of days. Defaults
-            to 1. ("2" means every other day, "3" means every three days, etc.)
+            to 1. ("2" means every other day, "3" means every three days, and so on)
       * For `weekly` triggers:
           * `every` --- How often the task should run, as a number of weeks. Defaults
-            to 1. ("2" means every other week, "3" means every three weeks, etc.)
+            to 1. ("2" means every other week, "3" means every three weeks, and so on)
           * `day_of_week` --- Which days of the week the task should run, as an array.
             Defaults to all days. Each day must be one of `mon`, `tues`,
             `wed`, `thurs`, `fri`, `sat`, `sun`, or `all`.
@@ -118,8 +118,7 @@ Puppet::Type.newtype(:scheduled_task) do
           * `months` --- Which months the task should run, as an array. Defaults to
             all months. Each month must be an integer between 1 and 12.
           * `on` **(Required)** --- Which days of the month the task should run,
-            as an array. Each day must be either an integer between 1 and 31,
-            or the special value `last,` which is always the last day of the month.
+            as an array. Each day must be an integer between 1 and 31.
       * For `monthly` (by weekday) triggers:
           * `months` --- Which months the task should run, as an array. Defaults to
             all months. Each month must be an integer between 1 and 12.
@@ -128,19 +127,19 @@ Puppet::Type.newtype(:scheduled_task) do
             `tues`, `wed`, `thurs`, `fri`, `sat`, `sun`, or `all`.
           * `which_occurrence` **(Required)** --- The occurrence of the chosen weekday
             when the task should run. Must be one of `first`, `second`, `third`,
-            `fourth`, `fifth`, or `last`.
+            `fourth`, or `fifth`.
 
 
       Examples:
 
-          # Run at 8am on the 1st, 15th, and last day of the month in January, March,
+          # Run at 8am on the 1st and 15th days of the month in January, March,
           # May, July, September, and November, starting after August 31st, 2011.
           trigger => {
             schedule   => monthly,
             start_date => '2011-08-31',   # Defaults to current date
             start_time => '08:00',        # Must be specified
             months     => [1,3,5,7,9,11], # Defaults to all
-            on         => [1, 15, last],  # Must be specified
+            on         => [1, 15],        # Must be specified
           }
 
           # Run at 8am on the first Monday of the month for January, March, and May,
@@ -174,11 +173,11 @@ Puppet::Type.newtype(:scheduled_task) do
     end
 
     def should_to_s(new_value=@should)
-      self.class.format_value_for_display(new_value)
+      super(new_value)
     end
 
     def is_to_s(current_value=@is)
-      self.class.format_value_for_display(current_value)
+      super(current_value)
     end
   end
 end

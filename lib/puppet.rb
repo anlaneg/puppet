@@ -1,6 +1,6 @@
 require 'puppet/version'
 
-if Gem::Version.new(RUBY_VERSION) < Gem::Version.new("1.9.3")
+if Gem::Version.new(RUBY_VERSION.dup) < Gem::Version.new("1.9.3")
   raise LoadError, _("Puppet %{version} requires ruby 1.9.3 or greater.") % { version: Puppet.version }
 end
 
@@ -21,20 +21,8 @@ require 'puppet/util/run_mode'
 require 'puppet/external/pson/common'
 require 'puppet/external/pson/version'
 require 'puppet/external/pson/pure'
+require 'puppet/gettext/config'
 
-# When running within puppetserver, the gettext-setup gem might not be available, so
-# we need to skip initializing i18n functionality and stub out methods normally
-# supplied by gettext-setup. Can be removed in Puppet 5. See PUP-7116.
-begin
-  require 'gettext-setup'
-  require 'locale'
-  Puppet::GETTEXT_AVAILABLE = true
-rescue LoadError
-  def _(msg)
-    msg
-  end
-  Puppet::GETTEXT_AVAILABLE = false
-end
 
 #------------------------------------------------------------
 # the top-level module
@@ -54,35 +42,8 @@ module Puppet
   require 'puppet/environments'
 
   class << self
-    if Puppet::GETTEXT_AVAILABLE
-      # e.g. ~/code/puppet/locales. Also when running as a gem.
-      local_locale_path = File.absolute_path('../locales', File.dirname(__FILE__))
-      # e.g. /opt/puppetlabs/puppet/share/locale
-      posix_system_locale_path = File.absolute_path('../../../share/locale', File.dirname(__FILE__))
-      # e.g. C:\Program Files\Puppet Labs\Puppet\puppet\share\locale
-      win32_system_locale_path = File.absolute_path('../../../../../puppet/share/locale', File.dirname(__FILE__))
-
-      if File.exist?(local_locale_path)
-        locale_path = local_locale_path
-      elsif File.exist?(win32_system_locale_path)
-        locale_path = win32_system_locale_path
-      elsif File.exist?(posix_system_locale_path)
-        locale_path = posix_system_locale_path
-      else
-        # We couldn't load our locale data.
-        locale_path = nil
-      end
-
-      if locale_path
-        if Gem.loaded_specs['gettext-setup'].version < Gem::Version.new('0.8')
-          # Will load translations from PO files only
-          GettextSetup.initialize(locale_path)
-        else
-          GettextSetup.initialize(locale_path, :file_format => :mo)
-        end
-        FastGettext.locale = GettextSetup.negotiate_locale(Locale.current.language)
-      end
-    end
+    Puppet::GettextConfig.setup_locale
+    Puppet::GettextConfig.create_default_text_domain
 
     include Puppet::Util
     attr_reader :features
@@ -165,7 +126,7 @@ module Puppet
 
   # Now that settings are loaded we have the code loaded to be able to issue
   # deprecation warnings. Warn if we're on a deprecated ruby version.
-  if Gem::Version.new(RUBY_VERSION) < Gem::Version.new(Puppet::OLDEST_RECOMMENDED_RUBY_VERSION)
+  if Gem::Version.new(RUBY_VERSION.dup) < Gem::Version.new(Puppet::OLDEST_RECOMMENDED_RUBY_VERSION)
     Puppet.deprecation_warning(_("Support for ruby version %{version} is deprecated and will be removed in a future release. See https://docs.puppet.com/puppet/latest/system_requirements.html#ruby for a list of supported ruby versions.") % { version: RUBY_VERSION })
   end
 
@@ -239,9 +200,11 @@ module Puppet
       # doesn't exist
       default_environment = Puppet[:environment].to_sym
       if default_environment == :production
+        modulepath = settings[:modulepath]
+        modulepath = (modulepath.nil? || '' == modulepath) ? basemodulepath : Puppet::Node::Environment.split_path(modulepath)
         loaders << Puppet::Environments::StaticPrivate.new(
           Puppet::Node::Environment.create(default_environment,
-                                           basemodulepath,
+                                           modulepath,
                                            Puppet::Node::Environment::NO_MANIFEST))
       end
     end
@@ -253,6 +216,7 @@ module Puppet
         Puppet::Network::HTTP::NoCachePool.new
       },
       :ssl_host => proc { Puppet::SSL::Host.localhost },
+      :certificate_revocation => proc { Puppet[:certificate_revocation] },
       :plugins => proc { Puppet::Plugins::Configuration.load_plugins }
     }
   end

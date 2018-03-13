@@ -5,7 +5,8 @@ class Puppet::Node::Ldap < Puppet::Indirector::Ldap
   desc "Search in LDAP for node configuration information.  See
   the [LDAP Nodes](https://docs.puppetlabs.com/guides/ldap_nodes.html) page for more information.  This will first
   search for whatever the certificate name is, then (if that name
-  contains a `.`) for the short name, then `default`."
+  contains a `.`) for the short name, then `default`.
+  Requires ruby-ldap with MRI ruby or jruby-ldap with puppetserver/jruby"
 
   # The attributes that Puppet class information is stored in.
   def class_attributes
@@ -30,13 +31,15 @@ class Puppet::Node::Ldap < Puppet::Indirector::Ldap
     names << request.key.sub(/\..+/, '') if request.key.include?(".") # we assume it's an fqdn
     names << "default"
 
+    facts = request.options[:facts].is_a?(Puppet::Node::Facts) ? request.options[:facts] : nil
+
     node = nil
     names.each do |name|
       next unless info = name2hash(name)
 
       merge_parent(info) if info[:parent]
       info[:environment] ||= request.environment
-      node = info2node(request.key, info)
+      node = info2node(request.key, info, facts)
       break
     end
 
@@ -91,7 +94,8 @@ class Puppet::Node::Ldap < Puppet::Indirector::Ldap
     result[:stacked] = get_stacked_values_from_entry(entry)
     result[:parameters] = get_parameters_from_entry(entry)
 
-    result[:environment] = result[:parameters]["environment"] if result[:parameters]["environment"]
+    # delete from parameters to prevent "Already declered variable $environment" error
+    result[:environment] = result[:parameters].delete(:environment) if result[:parameters][:environment]
 
     result[:stacked_parameters] = {}
 
@@ -186,12 +190,12 @@ class Puppet::Node::Ldap < Puppet::Indirector::Ldap
   end
 
   # Take a name and a hash, and return a node instance.
-  def info2node(name, info)
+  def info2node(name, info, facts = nil)
     node = Puppet::Node.new(name)
 
     add_to_node(node, info)
 
-    node.fact_merge
+    node.fact_merge(facts)
 
     node
   end
@@ -220,9 +224,23 @@ class Puppet::Node::Ldap < Puppet::Indirector::Ldap
     result.uniq
   end
 
+  # Workaround jruby-ldap 0.0.2 missing the #to_hash method
+  #
+  # @see https://github.com/jruby/jruby-ldap/pull/5
+  #
+  # @param entry [LDAP::Entry] The LDAP::Entry object to convert to a hash
+  # @return [Hash] The hash of the provided LDAP::Entry object with keys
+  #   downcased (puppet variables need to start with lowercase char)
+  def ldap_entry_to_hash(entry)
+     h = {}
+     entry.get_attributes.each { |a| h[a.downcase.to_sym] = entry[a] }
+     h[:dn] = [entry.dn]
+     h
+  end
+
   def get_parameters_from_entry(entry)
     stacked_params = stacked_attributes
-    entry.to_hash.inject({}) do |hash, ary|
+    ldap_entry_to_hash(entry).inject({}) do |hash, ary|
       unless stacked_params.include?(ary[0]) # don't add our stacked parameters to the main param list
         if ary[1].length == 1
           hash[ary[0]] = ary[1].shift

@@ -13,8 +13,8 @@
         "configuration_version",
         "report_format",
         "puppet_version",
-        "kind",
         "status",
+        "transaction_completed",
         "noop",
         "noop_pending",
         "environment"
@@ -100,6 +100,11 @@
             "type":        "string"
         },
 
+        "job_id": {
+            "description": "The id of the job that this transaction is a part of.",
+            "type":        ["string", "null"]
+        },
+
         "catalog_uuid": {
             "description": "A UUID covering a specific catalog.",
             "type":        "string"
@@ -122,20 +127,12 @@
         "report_format": {
             "description": "The report format version documented by this schema",
             "type":        "integer",
-            "enum":        ["6", 6]
+            "enum":        ["9", 9]
         },
 
         "puppet_version": {
             "description": "The version of the Puppet Agent the report is for.",
             "type":        "string"
-        },
-
-        "kind": {
-            "description": "Report kind, enumerator with one of the values:\n\n* `inspect`, if this report came from a puppet inspect run.\n* `apply`, if this report came from a puppet apply or puppet agent run",
-            "enum": [
-                "inspect",
-                "apply"
-            ]
         },
 
         "status": {
@@ -146,6 +143,11 @@
                 "unchanged"
             ]
         },
+
+        "transaction_completed": {
+                    "description": "Whether the transaction completed (e.g. didn't have an unrescued exception).",
+                    "type":        "boolean"
+                },
 
         "noop": {
             "description": "Whether the puppet run was started in noop mode",
@@ -250,7 +252,7 @@
                 },
 
                 "values": {
-                    "description": "The metric values in the 'time' category contains one entry per resource type in the catalog for\nwhich there is at least one resource and the values named:\n\n* `config_retrieval`\n* `total`\n* `inspect` (only present if the report is of `inspect`-kind)\n",
+                    "description": "The metric values in the 'time' category contains one entry per resource type in the catalog for\nwhich there is at least one resource and the values named:\n\n* `config_retrieval`\n* `total`\n\n",
                     "type":        "array",
                     "items": {
                         "description": "Each entry in `values` is an array with 3 slots for `name`, `label` and `value`",
@@ -458,6 +460,14 @@
                     "type":        "string"
                 },
 
+                "provider_used": {
+                    "description": "The provider name used by the resource",
+                    "oneOf":       [
+                        {"type": "string"},
+                        {"type": "null"}
+                    ]
+                },
+
                 "file": {
                     "description": "The pathname of the manifest file which declared the resource.",
                     "oneOf":       [
@@ -475,7 +485,7 @@
                 },
 
                 "evaluation_time": {
-                    "description": "The amount of time, in seconds, taken to evaluate the resource. Not present in reports of `inspect` kind.",
+                    "description": "The amount of time, in seconds, taken to evaluate the resource.",
                     "oneOf":       [
                         {"type": "number"},
                         {"type": "null"}
@@ -483,12 +493,12 @@
                 },
 
                 "change_count": {
-                    "description": "The number of properties which changed. Always 0 in reports of `inspect` kind.",
+                    "description": "The number of properties which changed.",
                     "type":        "integer"
                 },
 
                 "out_of_sync_count": {
-                    "description": "The number of properties which were out of sync. Always 0 in reports of `inspect` kind.",
+                    "description": "The number of properties which were out of sync.",
                     "type":        "integer"
                 },
 
@@ -583,7 +593,7 @@
                 },
 
                 "desired_value": {
-                    "description": "the value specified in the manifest. Absent in reports of `inspect` kind.",
+                    "description": "the value specified in the manifest.",
                     "oneOf": [
                         { "type": "string" },
                         { "type": "array" },
@@ -608,7 +618,7 @@
                 },
 
                 "name": {
-                    "description": "The name of the event. Absent in reports of `inspect` kind.",
+                    "description": "The name of the event.",
                     "type":        "string"
                 },
 

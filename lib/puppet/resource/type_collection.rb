@@ -58,7 +58,7 @@ class Puppet::Resource::TypeCollection
 
   def add(instance)
     # return a merged instance, or the given
-    result = catch(:merged) {
+    catch(:merged) {
       send("add_#{instance.type}", instance)
       instance.resource_type_collection = self
       instance
@@ -237,6 +237,7 @@ class Puppet::Resource::TypeCollection
           debug_once _("Not attempting to load %{type} %{fqname} as this object was missing during a prior compilation") % { type: type, fqname: fqname }
         end
       else
+        fqname = munge_name(fqname)
         result = loader.try_load_fqname(type, fqname)
         @notfound[ fqname ] = result.nil?
       end

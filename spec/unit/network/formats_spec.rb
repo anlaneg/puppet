@@ -47,6 +47,10 @@ describe "Puppet Network Format" do
       expect(msgpack.mime).to eq("application/x-msgpack")
     end
 
+    it "should have a nil charset" do
+      expect(msgpack.charset).to be_nil
+    end
+
     it "should have a weight of 20" do
       expect(msgpack.weight).to eq(20)
     end
@@ -86,6 +90,11 @@ describe "Puppet Network Format" do
 
     it "should have its mime type set to text/yaml" do
       expect(yaml.mime).to eq("text/yaml")
+    end
+
+    # we shouldn't be using yaml on the network
+    it "should have a nil charset" do
+      expect(yaml.charset).to be_nil
     end
 
     it "should be supported on Strings" do
@@ -150,6 +159,10 @@ describe "Puppet Network Format" do
       expect(text.mime).to eq("text/plain")
     end
 
+    it "should use 'utf-8' charset" do
+      expect(text.charset).to eq(Encoding::UTF_8)
+    end
+
     it "should use 'txt' as its extension" do
       expect(text.extension).to eq("txt")
     end
@@ -172,6 +185,10 @@ describe "Puppet Network Format" do
 
     it "should have its mimetype set to application/octet-stream" do
       expect(binary.mime).to eq("application/octet-stream")
+    end
+
+    it "should have a nil charset" do
+      expect(binary.charset).to be_nil
     end
 
     it "should not be supported by default" do
@@ -214,6 +231,10 @@ describe "Puppet Network Format" do
 
     it "should have its mime type set to text/pson" do
       expect(pson.mime).to eq("text/pson")
+    end
+
+    it "should have a nil charset" do
+      expect(pson.charset).to be_nil
     end
 
     it "should require the :render_method" do
@@ -296,6 +317,10 @@ describe "Puppet Network Format" do
       expect(json.mime).to eq("application/json")
     end
 
+    it "should use 'utf-8' charset" do
+      expect(json.charset).to eq(Encoding::UTF_8)
+    end
+
     it "should require the :render_method" do
       expect(json.required_methods).to be_include(:render_method)
     end
@@ -306,6 +331,14 @@ describe "Puppet Network Format" do
 
     it "should have a weight of 15" do
       expect(json.weight).to eq(15)
+    end
+
+    it "should use a native parser implementation" do
+      expect(JSON.parser.name).to eq("JSON::Ext::Parser")
+    end
+
+    it "should use a native generator implementation" do
+      expect(JSON.generator.name).to eq("JSON::Ext::Generator")
     end
 
     it "should render an instance as JSON" do
@@ -378,65 +411,110 @@ describe "Puppet Network Format" do
       end
     end
 
-    ["hello", 1, 1.0].each do |input|
-      it "should just return a #{input.inspect}" do
-        expect(console.render(input)).to eq(input)
+    context "when rendering ruby types" do
+      ["hello", 1, 1.0].each do |input|
+        it "should just return a #{input.inspect}" do
+          expect(console.render(input)).to eq(input)
+        end
+      end
+
+      { true  => "true",
+        false => "false",
+        nil   => "null",
+      }.each_pair do |input, output|
+        it "renders #{input.class} as '#{output}'" do
+          expect(console.render(input)).to eq(output)
+        end
+      end
+
+      it "renders an Object as its quoted inspect value" do
+        obj = Object.new
+        expect(console.render(obj)).to eq("\"#{obj.inspect}\"")
       end
     end
 
-    [true, false, nil, Object.new].each do |input|
-      it "renders #{input.class} using PSON" do
-        expect(console.render(input)).to eq(input.to_pson)
+    context "when rendering arrays" do
+      {
+        []                => "",
+        [1, 2]            => "1\n2\n",
+        ["one"]           => "one\n",
+        [{1 => 1}]        => "{1=>1}\n",
+        [[1, 2], [3, 4]]  => "[1, 2]\n[3, 4]\n"
+      }.each_pair do |input, output|
+        it "should render #{input.inspect} as one item per line" do
+          expect(console.render(input)).to eq(output)
+        end
       end
     end
 
-    [[1, 2], ["one"], [{ 1 => 1 }]].each do |input|
-      it "should render #{input.inspect} as one item per line" do
-        expect(console.render(input)).to eq(input.collect { |item| item.to_s + "\n" }.join(''))
+    context "when rendering hashes" do
+      {
+        {}                                   => "",
+        {1 => 2}                             => "1  2\n",
+        {"one" => "two"}                     => "one  \"two\"\n", # odd that two is quoted but one isn't
+        {[1,2] => 3, [2,3] => 5, [3,4] => 7} => "{\n  \"[1, 2]\": 3,\n  \"[2, 3]\": 5,\n  \"[3, 4]\": 7\n}",
+        {{1 => 2} => {3 => 4}}               => "{\n  \"{1=>2}\": {\n    \"3\": 4\n  }\n}"
+      }.each_pair do |input, output|
+        it "should render #{input.inspect}" do
+          expect(console.render(input)).to eq(output)
+        end
       end
-    end
 
-    it "should render empty hashes as empty strings" do
-      expect(console.render({})).to eq('')
-    end
+      it "should render a {String,Numeric}-keyed Hash into a table" do
+        json = Puppet::Network::FormatHandler.format(:json)
+        object = Object.new
+        hash = { "one" => 1, "two" => [], "three" => {}, "four" => object, 5 => 5,
+                 6.0 => 6 }
 
-    it "should render a non-trivially-keyed Hash as pretty printed PSON" do
-      hash = { [1,2] => 3, [2,3] => 5, [3,4] => 7 }
-      expect(console.render(hash)).to eq(PSON.pretty_generate(hash).chomp)
-    end
-
-    it "should render a {String,Numeric}-keyed Hash into a table" do
-      pson = Puppet::Network::FormatHandler.format(:pson)
-      object = Object.new
-      hash = { "one" => 1, "two" => [], "three" => {}, "four" => object,
-        5 => 5, 6.0 => 6 }
-
-      # Gotta love ASCII-betical sort order.  Hope your objects are better
-      # structured for display than my test one is. --daniel 2011-04-18
-      expect(console.render(hash)).to eq <<EOT
+        # Gotta love ASCII-betical sort order.  Hope your objects are better
+        # structured for display than my test one is. --daniel 2011-04-18
+        expect(console.render(hash)).to eq <<EOT
 5      5
 6.0    6
-four   #{pson.render(object).chomp}
+four   #{json.render(object).chomp}
 one    1
 three  {}
 two    []
 EOT
+      end
     end
 
-    it "should render a hash nicely with a multi-line value" do
-      pending "Moving to PSON rather than PP makes this unsupportable."
-      hash = {
-        "number" => { "1" => '1' * 40, "2" => '2' * 40, '3' => '3' * 40 },
-        "text"   => { "a" => 'a' * 40, 'b' => 'b' * 40, 'c' => 'c' * 40 }
+    context "when rendering face-related objects" do
+      it "pretty prints facts" do
+        tm = Time.new("2016-01-27T19:30:00")
+        values = {
+          "architecture" =>  "x86_64",
+          "os" => {
+            "release" => {
+              "full" => "15.6.0"
+            }
+          },
+          "system_uptime" => {
+            "seconds" => 505532
+          }
+        }
+        facts = Puppet::Node::Facts.new("foo", values)
+        facts.timestamp = tm
+
+        # For some reason, render omits the last newline, seems like a bug
+        expect(console.render(facts)).to eq(<<EOT.chomp)
+{
+  "name": "foo",
+  "values": {
+    "architecture": "x86_64",
+    "os": {
+      "release": {
+        "full": "15.6.0"
       }
-      expect(console.render(hash)).to eq <<EOT
-number  {"1"=>"1111111111111111111111111111111111111111",
-         "2"=>"2222222222222222222222222222222222222222",
-         "3"=>"3333333333333333333333333333333333333333"}
-text    {"a"=>"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-         "b"=>"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-         "c"=>"cccccccccccccccccccccccccccccccccccccccc"}
+    },
+    "system_uptime": {
+      "seconds": 505532
+    }
+  },
+  "timestamp": "#{tm.iso8601(9)}"
+}
 EOT
+      end
     end
   end
 end

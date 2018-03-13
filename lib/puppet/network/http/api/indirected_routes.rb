@@ -122,17 +122,18 @@ class Puppet::Network::HTTP::API::IndirectedRoutes
       raise Puppet::Network::HTTP::Error::HTTPNotFoundError.new(_("Could not find %{value0} %{key}") % { value0: indirection.name, key: key }, Puppet::Network::HTTP::Issues::RESOURCE_NOT_FOUND)
     end
 
-    format = accepted_response_formatter_for(indirection.model, request)
-
     rendered_result = result
-    if result.respond_to?(:render)
-      Puppet::Util::Profiler.profile(_("Rendered result in %{format}") % { format: format }, [:http, :v3_render, format]) do
-        rendered_result = result.render(format)
+
+    rendered_format = first_response_formatter_for(indirection.model, request) do |format|
+      if result.respond_to?(:render)
+        Puppet::Util::Profiler.profile(_("Rendered result in %{format}") % { format: format }, [:http, :v3_render, format]) do
+          rendered_result = result.render(format)
+        end
       end
     end
 
     Puppet::Util::Profiler.profile(_("Sent response"), [:http, :v3_response]) do
-      response.respond_with(200, format, rendered_result)
+      response.respond_with(200, rendered_format, rendered_result)
     end
   end
 
@@ -154,9 +155,13 @@ class Puppet::Network::HTTP::API::IndirectedRoutes
       raise Puppet::Network::HTTP::Error::HTTPNotFoundError.new(_("Could not find instances in %{indirection} with '%{key}'") % { indirection: indirection.name, key: key }, Puppet::Network::HTTP::Issues::RESOURCE_NOT_FOUND)
     end
 
-    format = accepted_response_formatter_for(indirection.model, request)
+    rendered_result = nil
 
-    response.respond_with(200, format, indirection.model.render_multiple(format, result))
+    rendered_format = first_response_formatter_for(indirection.model, request) do |format|
+      rendered_result = indirection.model.render_multiple(format, result)
+    end
+
+    response.respond_with(200, rendered_format, rendered_result)
   end
 
   # Execute our destroy.
@@ -178,21 +183,55 @@ class Puppet::Network::HTTP::API::IndirectedRoutes
     response.respond_with(200, formatter, formatter.render(result))
   end
 
-  def accepted_response_formatter_for(model_class, request)
-    accepted_formats = request.headers['accept'] or raise Puppet::Network::HTTP::Error::HTTPNotAcceptableError.new(_("Missing required Accept header"), Puppet::Network::HTTP::Issues::MISSING_HEADER_FIELD)
-    request.response_formatter_for(model_class.supported_formats, accepted_formats)
+  # Return the first response formatter that didn't cause the yielded
+  # block to raise a FormatError.
+  def first_response_formatter_for(model, request, &block)
+    formats = accepted_response_formatters_for(model, request)
+    formatter = formats.find do |format|
+      begin
+        yield format
+        true
+      rescue Puppet::Network::FormatHandler::FormatError
+        false
+      end
+    end
+
+    return formatter if formatter
+
+    raise Puppet::Network::HTTP::Error::HTTPNotAcceptableError.new(
+            _("No supported formats are acceptable (Accept: %{accepted_formats})") % { accepted_formats: formats },
+            Puppet::Network::HTTP::Issues::UNSUPPORTED_FORMAT)
   end
 
+  # Return an array of response formatters that the client accepts and
+  # the server supports.
+  def accepted_response_formatters_for(model_class, request)
+    request.response_formatters_for(model_class.supported_formats)
+  end
+
+  # Return the first response formatter that the client accepts and
+  # the server supports, or default to 'application/json'.
   def accepted_response_formatter_or_json_for(model_class, request)
-    accepted_formats = request.headers['accept'] || "application/json"
-    request.response_formatter_for(model_class.supported_formats, accepted_formats)
+    request.response_formatters_for(model_class.supported_formats, "application/json").first
   end
 
   def read_body_into_model(model_class, request)
     data = request.body.to_s
+    formatter = request.formatter
 
-    format = request.format
-    model_class.convert_from(format, data)
+    if formatter.supported?(model_class)
+      begin
+        return model_class.convert_from(formatter.name.to_s, data)
+      rescue => e
+        raise Puppet::Network::HTTP::Error::HTTPBadRequestError.new(
+          _("The request body is invalid: %{message}") % { message: e.message })
+      end
+    end
+
+    #TRANSLATORS "mime-type" is a keyword and should not be translated
+    raise Puppet::Network::HTTP::Error::HTTPUnsupportedMediaTypeError.new(
+      _("Client sent a mime-type (%{header}) that doesn't correspond to a format we support") % { header: request.headers['content-type'] },
+      Puppet::Network::HTTP::Issues::UNSUPPORTED_MEDIA_TYPE)
   end
 
   def indirection_method(http_method, indirection)
@@ -215,7 +254,7 @@ class Puppet::Network::HTTP::API::IndirectedRoutes
   def self.request_to_uri_and_body(request)
     url_prefix = IndirectionType.url_prefix_for(request.indirection_name.to_s)
     indirection = request.method == :search ? pluralize(request.indirection_name.to_s) : request.indirection_name.to_s
-    ["#{url_prefix}/#{indirection}/#{request.escaped_key}", "environment=#{request.environment.name}&#{request.query_string}"]
+    ["#{url_prefix}/#{indirection}/#{Puppet::Util.uri_encode(request.key)}", "environment=#{request.environment.name}&#{request.query_string}"]
   end
 
   def self.pluralize(indirection)
@@ -226,6 +265,7 @@ class Puppet::Network::HTTP::API::IndirectedRoutes
     # NOTE These specific hooks for paths are ridiculous, but it's a *many*-line
     # fix to not need this, and our goal is to move away from the complication
     # that leads to the fix being too long.
+    return :singular if indirection == "facts"
     return :singular if indirection == "status"
     return :singular if indirection == "certificate_status"
 

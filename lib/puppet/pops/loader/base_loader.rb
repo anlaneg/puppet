@@ -20,6 +20,16 @@ class BaseLoader < Loader
     @last_result = nil      # the value of the last name (optimization)
   end
 
+  def discover(type, error_collector = nil, name_authority = Pcore::RUNTIME_NAME_AUTHORITY, &block)
+    result = []
+    @named_values.each_pair do |key, entry|
+      result << key unless entry.nil? || entry.value.nil? || key.type != type || (block_given? && !yield(key))
+    end
+    result.concat(parent.discover(type, error_collector, name_authority, &block))
+    result.uniq!
+    result
+  end
+
   # @api public
   #
   def load_typed(typed_name)

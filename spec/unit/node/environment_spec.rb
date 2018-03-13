@@ -353,7 +353,7 @@ describe Puppet::Node::Environment do
           end
 
           it "does not find modules with same name by the wrong author" do
-            mod = PuppetSpec::Modules.create(
+            PuppetSpec::Modules.create(
               'baz',
               first_modulepath,
               :metadata => {:author => 'sneakylabs'},
@@ -489,6 +489,22 @@ describe Puppet::Node::Environment do
         end.to raise_error(Puppet::Error, /Syntax error at .../)
         expect(env.known_resource_types.parse_failed?).to be_truthy
       end
+    end
+  end
+
+  describe "managing module translations" do
+    it "creates a new text domain the first time we try to use the text domain" do
+      Puppet::GettextConfig.expects(:reset_text_domain).with(env.name)
+      Puppet::ModuleTranslations.expects(:load_from_modulepath)
+
+      env.use_text_domain
+    end
+
+    it "uses the existing text domain once it has been created" do
+      env.use_text_domain
+
+      Puppet::GettextConfig.expects(:use_text_domain).with(env.name)
+      env.use_text_domain
     end
   end
 

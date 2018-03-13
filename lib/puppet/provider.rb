@@ -119,11 +119,13 @@ class Puppet::Provider
 
   # Convenience methods - see class method with the same name.
   # @return (see self.execfail)
+  # @deprecated
   def execfail(*args)
     Puppet::Util::Execution.execfail(*args)
   end
 
   # (see Puppet::Util::Execution.execfail)
+  # @deprecated
   def self.execfail(*args)
     Puppet::Util::Execution.execfail(*args)
   end
@@ -141,7 +143,7 @@ class Puppet::Provider
     elsif superclass.respond_to? :command and command = superclass.command(name)
       # nothing
     else
-      raise Puppet::DevError, "No command #{name} defined for provider #{self.name}"
+      raise Puppet::DevError, _("No command %{command} defined for provider %{provider}") % { command: name, provider: self.name }
     end
 
     which(command)
@@ -288,16 +290,26 @@ class Puppet::Provider
     end
   end
 
+  # Compare a fact value against one or more supplied value
+  # @param [Symbol] fact a fact to query to match against one of the given values
+  # @param [Array, Regexp, String] values one or more values to compare to the
+  #   value of the given fact
+  # @return [Boolean] whether or not the fact value matches one of the supplied
+  #   values. Given one or more Regexp instances, fact is compared via the basic
+  #   pattern-matching operator.
   def self.fact_match(fact, values)
-    values = [values] unless values.is_a? Array
-    values.map! { |v| v.to_s.downcase.intern }
-
-    if fval = Facter.value(fact).to_s and fval != ""
-      fval = fval.to_s.downcase.intern
-
-      values.include?(fval)
+    fact_val = Facter.value(fact).to_s.downcase
+    if fact_val.empty?
+      return false
     else
-      false
+      values = [values] unless values.is_a?(Array)
+      values.any? do |value|
+        if value.is_a?(Regexp)
+          fact_val =~ value
+        else
+          fact_val.intern == value.to_s.downcase.intern
+        end
+      end
     end
   end
 
@@ -372,7 +384,7 @@ class Puppet::Provider
   # @raise [Puppet::DevError] Error indicating that the method should have been implemented by subclass.
   # @see prefetch
   def self.instances
-    raise Puppet::DevError, "Provider #{self.name} has not defined the 'instances' class method"
+    raise Puppet::DevError, _("Provider %{provider} has not defined the 'instances' class method") % { provider: self.name }
   end
 
   # Creates getter- and setter- methods for each property supported by the resource type.
@@ -444,7 +456,7 @@ class Puppet::Provider
       klass = param
     else
       unless klass = resource_type.attrclass(param)
-        raise Puppet::DevError, "'#{param}' is not a valid parameter for #{resource_type.name}"
+        raise Puppet::DevError, _("'%{parameter_name}' is not a valid parameter for %{resource_type}") % { parameter_name: param, resource_type: resource_type.name }
       end
     end
     return true unless features = klass.required_features
@@ -528,7 +540,7 @@ class Puppet::Provider
     elsif self.resource
       resource.name
     else
-      raise Puppet::DevError, "No resource and no name in property hash in #{self.class.name} instance"
+      raise Puppet::DevError, _("No resource and no name in property hash in %{class_name} instance") % { class_name: self.class.name }
     end
   end
 

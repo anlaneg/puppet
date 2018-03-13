@@ -25,13 +25,60 @@ module Pcore
   end
 
   def self.annotate(instance, annotations_hash)
-    annotations_hash.each_pair do |type, i12n_hash|
-      type.implementation_class.annotate(instance) { i12n_hash }
+    annotations_hash.each_pair do |type, init_hash|
+      type.implementation_class.annotate(instance) { init_hash }
     end
     instance
   end
 
-  def self.init(loader, ir, for_agent)
+  def self.init_env(loader)
+    if Puppet[:tasks]
+      add_object_type('Task', <<-PUPPET, loader)
+        {
+          attributes => {   
+            # Fully qualified name of the task
+            name => { type => Pattern[/\\A[a-z][a-z0-9_]*(?:::[a-z][a-z0-9_]*)*\\z/] },
+
+            # Full path to executable
+            executable => { type => String },
+
+            # Task description
+            description => { type => Optional[String], value => undef },
+
+            # Puppet Task version
+            puppet_task_version => { type => Integer, value => 1 },
+  
+            # Type, description, and sensitive property of each parameter 
+            parameters => {
+              type => Optional[Hash[
+                Pattern[/\\A[a-z][a-z0-9_]*\\z/],
+                Struct[
+                  Optional[description] => String,
+                  Optional[sensitive] => Boolean,
+                  type => Type]]],
+              value => undef
+            },
+
+             # Type, description, and sensitive property of each output 
+            output => {
+              type => Optional[Hash[
+                Pattern[/\\A[a-z][a-z0-9_]*\\z/],
+                Struct[
+                  Optional[description] => String,
+                  Optional[sensitive] => Boolean,
+                  type => Type]]],
+              value => undef
+            },
+ 
+            supports_noop => { type => Boolean, value => false },
+            input_method => { type => String, value => 'both' },
+          }
+        }
+      PUPPET
+    end
+  end
+
+  def self.init(loader, ir)
     add_alias('Pcore::URI_RX', TYPE_URI_RX, loader)
     add_type(TYPE_URI_ALIAS, loader)
     add_alias('Pcore::SimpleTypeName', TYPE_SIMPLE_TYPE_NAME, loader)
@@ -42,14 +89,12 @@ module Pcore
 
     @type = create_object_type(loader, ir, Pcore, 'Pcore', nil)
 
-    ir.register_implementation_namespace('Pcore', 'Puppet::Pops::Pcore', loader)
-    ir.register_implementation_namespace('Puppet::AST', 'Puppet::Pops::Model', loader)
-    ir.register_implementation('Puppet::AST::Locator', 'Puppet::Pops::Parser::Locator::Locator19', loader)
-    unless for_agent
-      Resource.register_ptypes(loader, ir)
-      Lookup::Context.register_ptype(loader, ir);
-      Lookup::DataProvider.register_types(loader)
-    end
+    ir.register_implementation_namespace('Pcore', 'Puppet::Pops::Pcore')
+    ir.register_implementation_namespace('Puppet::AST', 'Puppet::Pops::Model')
+    ir.register_implementation('Puppet::AST::Locator', 'Puppet::Pops::Parser::Locator::Locator19')
+    Resource.register_ptypes(loader, ir)
+    Lookup::Context.register_ptype(loader, ir);
+    Lookup::DataProvider.register_types(loader)
   end
 
   # Create and register a new `Object` type in the Puppet Type System and map it to an implementation class
@@ -66,13 +111,13 @@ module Pcore
   #
   # @api private
   def self.create_object_type(loader, ir, impl_class, type_name, parent_name, attributes_hash = EMPTY_HASH, functions_hash = EMPTY_HASH, equality = nil)
-    i12n_hash = {}
-    i12n_hash[Types::KEY_PARENT] = Types::PTypeReferenceType.new(parent_name) unless parent_name.nil?
-    i12n_hash[Types::KEY_ATTRIBUTES] = attributes_hash unless attributes_hash.empty?
-    i12n_hash[Types::KEY_FUNCTIONS] = functions_hash unless functions_hash.empty?
-    i12n_hash[Types::KEY_EQUALITY] = equality unless equality.nil?
-    ir.register_implementation(type_name, impl_class, loader)
-    add_type(Types::PObjectType.new(type_name, i12n_hash), loader)
+    init_hash = {}
+    init_hash[Types::KEY_PARENT] = Types::PTypeReferenceType.new(parent_name) unless parent_name.nil?
+    init_hash[Types::KEY_ATTRIBUTES] = attributes_hash unless attributes_hash.empty?
+    init_hash[Types::KEY_FUNCTIONS] = functions_hash unless functions_hash.empty?
+    init_hash[Types::KEY_EQUALITY] = equality unless equality.nil?
+    ir.register_implementation(type_name, impl_class)
+    add_type(Types::PObjectType.new(type_name, init_hash), loader)
   end
 
   def self.add_object_type(name, body, loader)
@@ -84,7 +129,7 @@ module Pcore
   end
 
   def self.add_type(type, loader, name_authority = RUNTIME_NAME_AUTHORITY)
-    loader.set_entry(Loader::TypedName.new(:type, type.name.downcase, name_authority), type)
+    loader.set_entry(Loader::TypedName.new(:type, type.name, name_authority), type)
     type
   end
 
@@ -96,8 +141,7 @@ module Pcore
     aliases.each do |name, type_string|
       add_type(Types::PTypeAliasType.new(name, Types::TypeFactory.type_reference(type_string), nil), loader, name_authority)
     end
-    parser = Types::TypeParser.singleton
-    aliases.each_key.map { |name| loader.load(:type, name.downcase).resolve(parser, loader) }
+    aliases.each_key.map { |name| loader.load(:type, name).resolve(loader) }
   end
 end
 end

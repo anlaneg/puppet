@@ -1,3 +1,7 @@
+# The `yaml_data` is a hiera 5 `data_hash` data provider function.
+# See [the configuration guide documentation](https://docs.puppet.com/puppet/latest/hiera_config_yaml_5.html#configuring-a-hierarchy-level-built-in-backends) for
+# how to use this function.
+#
 # @since 4.8.0
 #
 require 'yaml'
@@ -21,7 +25,7 @@ Puppet::Functions.create_function(:yaml_data) do
         if data.is_a?(Hash)
           Puppet::Pops::Lookup::HieraConfig.symkeys_to_string(data)
         else
-          Puppet.warning("#{path}: file does not contain a valid yaml hash")
+          Puppet.warning(_("%{path}: file does not contain a valid yaml hash" % { path: path }))
           {}
         end
       rescue YAML::SyntaxError => ex

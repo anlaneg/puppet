@@ -160,7 +160,7 @@ describe Puppet::Resource::Catalog, "when compiling" do
     before do
       @original = Puppet::Resource::Catalog.new("mynode")
       @original.tag(*%w{one two three})
-      @original.add_class *%w{four five six}
+      @original.add_class(*%w{four five six})
 
       @top            = Puppet::Resource.new :class, 'top'
       @topobject      = Puppet::Resource.new :file, @basepath+'/topobject'
@@ -233,7 +233,7 @@ describe Puppet::Resource::Catalog, "when compiling" do
     before :each do
       @original = Puppet::Resource::Catalog.new("mynode")
       @original.tag(*%w{one two three})
-      @original.add_class *%w{four five six}
+      @original.add_class(*%w{four five six})
 
       @r1 = stub_everything 'r1', :ref => "File[/a]"
       @r1.stubs(:respond_to?).with(:ref).returns(true)
@@ -401,9 +401,9 @@ describe Puppet::Resource::Catalog, "when compiling" do
           expect(error).to be_a Puppet::Resource::Catalog::DuplicateResourceError
 
           expect(error.message).to match %r[Duplicate declaration: Notify\[duplicate-title\] is already declared]
-          expect(error.message).to match %r[in file /path/to/orig/file:42]
+          expect(error.message).to match %r[at \(file: /path/to/orig/file, line: 42\)]
           expect(error.message).to match %r[cannot redeclare]
-          expect(error.message).to match %r[at /path/to/dupe/file:314]
+          expect(error.message).to match %r[\(file: /path/to/dupe/file, line: 314\)]
         }
       end
     end
@@ -438,7 +438,7 @@ describe Puppet::Resource::Catalog, "when compiling" do
     it "should optionally support an initialization block and should finalize after such blocks" do
       @one.expects :finish
       @two.expects :finish
-      config = Puppet::Resource::Catalog.new("host") do |conf|
+      Puppet::Resource::Catalog.new("host") do |conf|
         conf.add_resource @one
         conf.add_resource @two
       end
@@ -658,6 +658,16 @@ describe Puppet::Resource::Catalog, "when compiling" do
       @catalog.apply(:ignoreschedules => true)
     end
 
+    it "should detect transaction failure and report it" do
+      @transaction.stubs(:evaluate).raises(RuntimeError, 'transaction failed.')
+      report = Puppet::Transaction::Report.new('apply')
+
+      expect { @catalog.apply(:report => report) }.to raise_error(RuntimeError)
+      report.finalize_report
+
+      expect(report.status).to eq('failed')
+    end
+
     describe "host catalogs" do
 
       # super() doesn't work in the setup method for some reason
@@ -853,32 +863,31 @@ describe Puppet::Resource::Catalog, "when converting a resource catalog to json"
   context 'when dealing with parameters that have non-Data values' do
     context 'and rich_data is enabled' do
       before(:each) do
+        Puppet.push_context(:loaders => Puppet::Pops::Loaders.new(Puppet.lookup(:environments).get(Puppet[:environment])))
         Puppet[:rich_data] = true
       end
 
       after(:each) do
         Puppet[:rich_data] = false
+        Puppet.pop_context
       end
 
 
       let(:catalog_w_regexp)  { compile_to_catalog("notify {'foo': message => /[a-z]+/ }") }
 
-      it 'should generate ext_parameters for parameter values that are not Data' do
-        expect(catalog_w_regexp.to_json).to include('"ext_parameters":{"message":[[48,"[a-z]+"]]}')
+      it 'should generate rich value hash for parameter values that are not Data' do
+        s = catalog_w_regexp.to_json
+        expect(s).to include('"parameters":{"message":{"__pcore_type__":"Regexp","__pcore_value__":"[a-z]+"}}')
       end
 
-      it 'should validate ext_parameters against the schema' do
-        expect(catalog_w_regexp.to_json).to validate_against('api/schemas/catalog.json')
-      end
-
-      it 'should read and convert ext_parameters containing Regexp from json' do
+      it 'should read and convert rich value hash containing Regexp from json' do
         catalog2 = Puppet::Resource::Catalog.from_data_hash(JSON.parse(catalog_w_regexp.to_json))
         message = catalog2.resource('notify', 'foo')['message']
         expect(message).to be_a(Regexp)
         expect(message).to eql(/[a-z]+/)
       end
 
-      it 'should read and convert ext_parameters containing Version from json' do
+      it 'should read and convert rich value hash containing Version from json' do
         catalog = compile_to_catalog("notify {'foo': message => SemVer('1.0.0') }")
         catalog2 = Puppet::Resource::Catalog.from_data_hash(JSON.parse(catalog.to_json))
         message = catalog2.resource('notify', 'foo')['message']
@@ -886,7 +895,7 @@ describe Puppet::Resource::Catalog, "when converting a resource catalog to json"
         expect(message).to eql(SemanticPuppet::Version.parse('1.0.0'))
       end
 
-      it 'should read and convert ext_parameters containing VersionRange from json' do
+      it 'should read and convert rich value hash containing VersionRange from json' do
         catalog = compile_to_catalog("notify {'foo': message => SemVerRange('>=1.0.0') }")
         catalog2 = Puppet::Resource::Catalog.from_data_hash(JSON.parse(catalog.to_json))
         message = catalog2.resource('notify', 'foo')['message']
@@ -894,7 +903,7 @@ describe Puppet::Resource::Catalog, "when converting a resource catalog to json"
         expect(message).to eql(SemanticPuppet::VersionRange.parse('>=1.0.0'))
       end
 
-      it 'should read and convert ext_parameters containing Timespan from json' do
+      it 'should read and convert rich value hash containing Timespan from json' do
         catalog = compile_to_catalog("notify {'foo': message => Timespan(1234) }")
         catalog2 = Puppet::Resource::Catalog.from_data_hash(JSON.parse(catalog.to_json))
         message = catalog2.resource('notify', 'foo')['message']
@@ -902,7 +911,7 @@ describe Puppet::Resource::Catalog, "when converting a resource catalog to json"
         expect(message).to eql(Puppet::Pops::Time::Timespan.parse('1234', '%S'))
       end
 
-      it 'should read and convert ext_parameters containing Timestamp from json' do
+      it 'should read and convert rich value hash containing Timestamp from json' do
         catalog = compile_to_catalog("notify {'foo': message => Timestamp('2016-09-15T08:32:16.123 UTC') }")
         catalog2 = Puppet::Resource::Catalog.from_data_hash(JSON.parse(catalog.to_json))
         message = catalog2.resource('notify', 'foo')['message']
@@ -910,7 +919,7 @@ describe Puppet::Resource::Catalog, "when converting a resource catalog to json"
         expect(message).to eql(Puppet::Pops::Time::Timestamp.parse('2016-09-15T08:32:16.123 UTC'))
       end
 
-      it 'should read and convert ext_parameters containing hash with rich data from json' do
+      it 'should read and convert rich value hash containing hash with rich data from json' do
         catalog = compile_to_catalog("notify {'foo': message => { 'version' => SemVer('1.0.0'), 'time' => Timestamp('2016-09-15T08:32:16.123 UTC') }}")
         catalog2 = Puppet::Resource::Catalog.from_data_hash(JSON.parse(catalog.to_json))
         message = catalog2.resource('notify', 'foo')['message']
@@ -919,7 +928,7 @@ describe Puppet::Resource::Catalog, "when converting a resource catalog to json"
         expect(message['time']).to eql(Puppet::Pops::Time::Timestamp.parse('2016-09-15T08:32:16.123 UTC'))
       end
 
-      it 'should read and convert ext_parameters containing an array with rich data from json' do
+      it 'should read and convert rich value hash containing an array with rich data from json' do
         catalog = compile_to_catalog("notify {'foo': message => [ SemVer('1.0.0'), Timestamp('2016-09-15T08:32:16.123 UTC') ] }")
         catalog2 = Puppet::Resource::Catalog.from_data_hash(JSON.parse(catalog.to_json))
         message = catalog2.resource('notify', 'foo')['message']
@@ -936,8 +945,8 @@ describe Puppet::Resource::Catalog, "when converting a resource catalog to json"
 
       let(:catalog_w_regexp)  { compile_to_catalog("notify {'foo': message => /[a-z]+/ }") }
 
-      it 'should not generate ext_parameters for parameter values that are not Data' do
-        expect(catalog_w_regexp.to_json).not_to include('"ext_parameters":{"message":[48,"[a-z]+"]}')
+      it 'should not generate rich value hash for parameter values that are not Data' do
+        expect(catalog_w_regexp.to_json).not_to include('"__pcore_type__"')
       end
 
       it 'should convert parameter containing Regexp into strings' do
@@ -976,8 +985,29 @@ describe Puppet::Resource::Catalog, "when converting a resource catalog to json"
         catalog2 = Puppet::Resource::Catalog.from_data_hash(JSON.parse(catalog.to_json))
         message = catalog2.resource('notify', 'foo')['message']
         expect(message).to be_a(String)
-        expect(message).to eql('2016-09-15T08:32:16.123 UTC')
+        expect(message).to eql('2016-09-15T08:32:16.123000000 UTC')
       end
+
+      it 'should convert param containing array with :undef entries' do
+        catalog = compile_to_catalog("notify {'foo': message => [ 10, undef, 20 ] }")
+        catalog2 = Puppet::Resource::Catalog.from_data_hash(JSON.parse(catalog.to_json))
+        message = catalog2.resource('notify', 'foo')['message']
+        expect(message).to be_a(Array)
+        expect(message[0]).to eql(10)
+        expect(message[1]).to eql(nil)
+        expect(message[2]).to eql(20)
+      end
+
+      it 'should convert param containing hash with :undef entries' do
+        catalog = compile_to_catalog("notify {'foo': message => {a => undef, b => 10}}")
+        catalog2 = Puppet::Resource::Catalog.from_data_hash(JSON.parse(catalog.to_json))
+        message = catalog2.resource('notify', 'foo')['message']
+        expect(message).to be_a(Hash)
+        expect(message.has_key?('a')).to eql(true)
+        expect(message['a']).to eql(nil)
+        expect(message['b']).to eql(10)
+      end
+
     end
 
   end
@@ -1046,18 +1076,18 @@ describe Puppet::Resource::Catalog, "when converting from json" do
     }
   end
 
-  it "should create it with the provided name" do
+  it 'should create it with the provided name' do
     @data['version'] = 50
     @data['code_id'] = 'b59e5df0578ef411f773ee6c33d8073c50e7b8fe'
     @data['catalog_uuid'] = '827a74c8-cf98-44da-9ff7-18c5e4bee41e'
     @data['catalog_format'] = 42
     @data['tags'] = %w{one two}
     @data['classes'] = %w{one two}
-    @data['edges'] = [Puppet::Relationship.new("File[/foo]", "File[/bar]",
-                                               :event => "one",
-                                               :callback => "refresh").to_data_hash]
-    @data['resources'] = [Puppet::Resource.new(:file, "/foo").to_data_hash,
-                          Puppet::Resource.new(:file, "/bar").to_data_hash]
+    @data['edges'] = [Puppet::Relationship.new('File[/foo]', 'File[/bar]',
+                                               :event => :one,
+                                               :callback => :refresh).to_data_hash]
+    @data['resources'] = [Puppet::Resource.new(:file, '/foo').to_data_hash,
+                          Puppet::Resource.new(:file, '/bar').to_data_hash]
 
 
     catalog = Puppet::Resource::Catalog.from_data_hash JSON.parse @data.to_json
@@ -1067,15 +1097,15 @@ describe Puppet::Resource::Catalog, "when converting from json" do
     expect(catalog.code_id).to eq(@data['code_id'])
     expect(catalog.catalog_uuid).to eq(@data['catalog_uuid'])
     expect(catalog.catalog_format).to eq(@data['catalog_format'])
-    expect(catalog).to be_tagged("one")
-    expect(catalog).to be_tagged("two")
+    expect(catalog).to be_tagged('one')
+    expect(catalog).to be_tagged('two')
 
     expect(catalog.classes).to eq(@data['classes'])
-    expect(catalog.resources.collect(&:ref)).to eq(["File[/foo]", "File[/bar]"])
+    expect(catalog.resources.collect(&:ref)).to eq(['File[/foo]', 'File[/bar]'])
 
-    expect(catalog.edges.collect(&:event)).to eq(["one"])
-    expect(catalog.edges[0].source).to eq(catalog.resource(:file, "/foo"))
-    expect(catalog.edges[0].target).to eq(catalog.resource(:file, "/bar"))
+    expect(catalog.edges.collect(&:event)).to eq([:one])
+    expect(catalog.edges[0].source).to eq(catalog.resource(:file, '/foo'))
+    expect(catalog.edges[0].target).to eq(catalog.resource(:file, '/bar'))
   end
 
   it "defaults the catalog_format to 0" do

@@ -16,6 +16,7 @@ Puppet::Type.type(:user).provide :useradd, :parent => Puppet::Provider::NameServ
   options :groups, :flag => "-G"
   options :password_min_age, :flag => "-m", :method => :sp_min
   options :password_max_age, :flag => "-M", :method => :sp_max
+  options :password_warn_days, :flag => "-W", :method => :sp_warn
   options :password, :method => :sp_pwdp
   options :expiry, :method => :sp_expire,
     :munge => proc { |value|
@@ -41,7 +42,7 @@ Puppet::Type.type(:user).provide :useradd, :parent => Puppet::Provider::NameServ
       end
     }
 
-  optional_commands :localadd => "luseradd"
+  optional_commands :localadd => "luseradd", :localdelete => "luserdel", :localmodify => "lusermod", :localpassword => "lchage"
   has_feature :libuser if Puppet.features.libuser?
 
   def exists?
@@ -156,7 +157,7 @@ Puppet::Type.type(:user).provide :useradd, :parent => Puppet::Provider::NameServ
     # sort them to have a predictable command line in tests
     Puppet::Type.type(:user).validproperties.sort.each do |property|
       next if property == :ensure
-      next if property.to_s =~ /password_.+_age/
+      next if property_manages_password_age?(property)
       next if property == :groups and @resource.forcelocal?
       next if property == :expiry and @resource.forcelocal?
       # the value needs to be quoted, mostly because -c might
@@ -185,25 +186,54 @@ Puppet::Type.type(:user).provide :useradd, :parent => Puppet::Provider::NameServ
     cmd << @resource[:name]
   end
 
+  def modifycmd(param, value)
+    if @resource.forcelocal?
+      if param == :groups
+        cmd = [command(:modify)]
+      else
+        cmd = [command(property_manages_password_age?(param) ? :localpassword : :localmodify)]
+      end
+      @custom_environment = Puppet::Util::Libuser.getenv
+    else
+      cmd = [command(property_manages_password_age?(param) ? :password : :modify)]
+    end
+    cmd << flag(param) << value
+    cmd += check_allow_dup if param == :uid
+    cmd << @resource[:name]
+
+    cmd
+  end
+
   def deletecmd
-    cmd = [command(:delete)]
+    if @resource.forcelocal?
+      cmd = [command(:localdelete)]
+      @custom_environment = Puppet::Util::Libuser.getenv
+    else
+      cmd = [command(:delete)]
+    end
     cmd += @resource.managehome? ? ['-r'] : []
     cmd << @resource[:name]
   end
 
   def passcmd
-    age_limits = [:password_min_age, :password_max_age].select { |property| @resource.should(property) }
+    if @resource.forcelocal?
+      cmd = command(:localpassword)
+      @custom_environment = Puppet::Util::Libuser.getenv
+    else
+      cmd = command(:password)
+    end
+    age_limits = [:password_min_age, :password_max_age, :password_warn_days].select { |property| @resource.should(property) }
     if age_limits.empty?
       nil
     else
-      [command(:password),age_limits.collect { |property| [flag(property), @resource.should(property)]}, @resource[:name]].flatten
+      [cmd, age_limits.collect { |property| [flag(property), @resource.should(property)]}, @resource[:name]].flatten
     end
   end
 
-  [:expiry, :password_min_age, :password_max_age, :password].each do |shadow_property|
+  [:expiry, :password_min_age, :password_max_age, :password_warn_days, :password].each do |shadow_property|
     define_method(shadow_property) do
       if Puppet.features.libshadow?
-        if ent = Shadow::Passwd.getspnam(@resource.name)
+        if ent = Shadow::Passwd.getspnam(@canonical_name)
           method = self.class.option(shadow_property, :method)
           return unmunge(shadow_property, ent.send(method))
         end
@@ -227,5 +257,9 @@ Puppet::Type.type(:user).provide :useradd, :parent => Puppet::Provider::NameServ
 
   def groups?
     !!@resource[:groups]
+  end
+
+  def property_manages_password_age?(property)
+    property.to_s =~ /password_.+_age|password_warn_days/
   end
 end

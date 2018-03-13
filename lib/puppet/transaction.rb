@@ -28,7 +28,7 @@ class Puppet::Transaction
   # Handles most of the actual interacting with resources
   attr_reader :resource_harness
 
-  attr_reader :prefetched_providers
+  attr_reader :prefetched_providers, :prefetch_failed_providers
 
   # @!attribute [r] persistence
   #   @return [Puppet::Transaction::Persistence] persistence object for cross
@@ -43,7 +43,7 @@ class Puppet::Transaction
 
     @persistence = Puppet::Transaction::Persistence.new
 
-    @report = report || Puppet::Transaction::Report.new("apply", catalog.version, catalog.environment)
+    @report = report || Puppet::Transaction::Report.new(catalog.version, catalog.environment)
 
     @prioritizer = prioritizer
 
@@ -54,6 +54,8 @@ class Puppet::Transaction
     @resource_harness = Puppet::Transaction::ResourceHarness.new(self)
 
     @prefetched_providers = Hash.new { |h,k| h[k] = {} }
+
+    @prefetch_failed_providers = Hash.new { |h,k| h[k] = {} }
   end
 
   # Invoke the pre_run_check hook in every resource in the catalog.
@@ -93,7 +95,7 @@ class Puppet::Transaction
 
     perform_pre_run_checks
 
-    persistence.load if catalog.host_config?
+    persistence.load if persistence.enabled?(catalog)
 
     Puppet.info _("Applying configuration version '%{version}'") % { version: catalog.version } if catalog.version
 
@@ -145,7 +147,22 @@ class Puppet::Transaction
         end
       end
 
-      persistence.save if catalog.host_config?
+      persistence.save if persistence.enabled?(catalog)
+    end
+
+    # Graph cycles are returned as an array of arrays
+    # - outer array is an array of cycles
+    # - each inner array is an array of resources involved in a cycle
+    # Short circuit resource evaluation if we detect cycle(s) in the graph. Mark
+    # each corresponding resource as failed in the report before we fail to
+    # ensure accurate reporting.
+    graph_cycle_handler = lambda do |cycles|
+      cycles.flatten.uniq.each do |resource|
+        # We add a failed resource event to the status to ensure accurate
+        # reporting through the event manager.
+        resource_status(resource).fail_with_event(_('resource is part of a dependency cycle'))
+      end
+      raise Puppet::Error, _('One or more resource dependency cycles detected in graph')
     end
 
     # Generate the relationship graph, set up our generator to use it
@@ -155,13 +172,14 @@ class Puppet::Transaction
                                 :pre_process => pre_process,
                                 :overly_deferred_resource_handler => overly_deferred_resource_handler,
                                 :canceled_resource_handler => canceled_resource_handler,
+                                :graph_cycle_handler => graph_cycle_handler,
                                 :teardown => teardown) do |resource|
       if resource.is_a?(Puppet::Type::Component)
         Puppet.warning _("Somehow left a component in the relationship graph")
       else
-        resource.info _("Starting to evaluate the resource") if Puppet[:evaltrace] and @catalog.host_config?
+        resource.info _("Starting to evaluate the resource") if Puppet[:evaltrace] && @catalog.host_config?
         seconds = thinmark { block.call(resource) }
-        resource.info _("Evaluated in %0.2f seconds") % seconds if Puppet[:evaltrace] and @catalog.host_config?
+        resource.info _("Evaluated in %{seconds} seconds") % { seconds: "%0.2f" % seconds } if Puppet[:evaltrace] && @catalog.host_config?
       end
     end
 
@@ -170,6 +188,9 @@ class Puppet::Transaction
     if generator.resources_failed_to_generate
       report.resources_failed_to_generate = true
     end
+
+    # mark the end of transaction evaluate.
+    report.transaction_completed = true
 
     Puppet.debug "Finishing transaction #{object_id}"
   end
@@ -181,7 +202,9 @@ class Puppet::Transaction
 
   # Are there any failed resources in this transaction?
   def any_failed?
-    report.resource_statuses.values.detect { |status| status.failed? }
+    report.resource_statuses.values.detect { |status|
+      status.failed? || status.failed_to_restart?
+    }
   end
 
   # Find all of the changed resources.
@@ -210,7 +233,11 @@ class Puppet::Transaction
 
   def prefetch_if_necessary(resource)
     provider_class = resource.provider.class
-    return unless provider_class.respond_to?(:prefetch) and !prefetched_providers[resource.type][provider_class.name]
+    if !provider_class.respond_to?(:prefetch) or
+        prefetched_providers[resource.type][provider_class.name] or
+        prefetch_failed_providers[resource.type][provider_class.name]
+      return
+    end
 
     resources = resources_by_provider(resource.type, provider_class.name)
 
@@ -229,7 +256,10 @@ class Puppet::Transaction
   def apply(resource, ancestor = nil)
     status = resource_harness.evaluate(resource)
     add_resource_status(status)
-    event_manager.queue_events(ancestor || resource, status.events) unless status.failed?
+    ancestor ||= resource
+    if !(status.failed? || status.failed_to_restart?)
+      event_manager.queue_events(ancestor, status.events)
+    end
   rescue => detail
     resource.err _("Could not evaluate: %{detail}") % { detail: detail }
   end
@@ -241,6 +271,7 @@ class Puppet::Transaction
       resource_status(resource).skipped = true
       resource.debug("Resource is being skipped, unscheduling all events")
       event_manager.dequeue_all_events_for_resource(resource)
+      persistence.copy_skipped(resource.ref)
     else
       resource_status(resource).scheduled = true
       apply(resource, ancestor)
@@ -277,14 +308,20 @@ class Puppet::Transaction
   # up-front at failure time because the graph may be mutated as we
   # walk it.
   def propagate_failure(resource)
+
+    provider_class = resource.provider.class
+    s = resource_status(resource)
+    if prefetch_failed_providers[resource.type][provider_class.name] && !s.nil?
+      message = _("Prefetch failed for %{type_name} provider '%{name}'") % { type_name: resource.type, name: provider_class.name }
+      s.fail_with_event(message)
+    end
+
     failed = Set.new
     relationship_graph.direct_dependencies_of(resource).each do |dep|
-      if (s = resource_status(dep))
-        failed.merge(s.failed_dependencies) if s.dependency_failed?
-        if s.failed?
-          failed.add(dep)
-        end
-      end
+      s = resource_status(dep)
+      next if s.nil?
+      failed.merge(s.failed_dependencies) if s.dependency_failed?
+      failed.add(dep) if s.failed? || s.failed_to_restart?
     end
     resource_status(resource).failed_dependencies = failed.to_a
   end
@@ -313,13 +350,20 @@ class Puppet::Transaction
   # types, just providers.
   def prefetch(provider_class, resources)
     type_name = provider_class.resource_type.name
-    return if @prefetched_providers[type_name][provider_class.name]
+    return if @prefetched_providers[type_name][provider_class.name] ||
+      @prefetch_failed_providers[type_name][provider_class.name]
     Puppet.debug "Prefetching #{provider_class.name} resources for #{type_name}"
     begin
       provider_class.prefetch(resources)
-    rescue LoadError, Puppet::MissingCommand => detail
+    rescue Exception => detail
+      if !detail.is_a?(LoadError) && !detail.is_a?(Puppet::MissingCommand)
+        raise unless Puppet.settings[:future_features]
+        
+        @prefetch_failed_providers[type_name][provider_class.name] = true
+      end
       #TRANSLATORS `prefetch` is a function name and should not be translated
-      Puppet.log_exception(detail, _("Could not prefetch %{type_name} provider '%{name}': %{detail}") % { type_name: type_name, name: provider_class.name, detail: detail })
+      message = _("Could not prefetch %{type_name} provider '%{name}': %{detail}") % { type_name: type_name, name: provider_class.name, detail: detail }
+      Puppet.log_exception(detail, message)
     end
     @prefetched_providers[type_name][provider_class.name] = true
   end
@@ -330,7 +374,7 @@ class Puppet::Transaction
 
   # Is the resource currently scheduled?
   def scheduled?(resource)
-    self.ignoreschedules or resource_harness.scheduled?(resource)
+    self.ignoreschedules || resource_harness.scheduled?(resource)
   end
 
   # Should this resource be skipped?
@@ -349,6 +393,10 @@ class Puppet::Transaction
       unless resource.class == Puppet::Type.type(:whit) then
         resource.warning _("Skipping because of failed dependencies")
       end
+    elsif resource_status(resource).failed? &&
+        @prefetch_failed_providers[resource.type][resource.provider.class.name]
+      #Do not try to evaluate a resource with a known failed provider
+      resource.warning _("Skipping because provider prefetch failed")
     elsif resource.virtual?
       resource.debug "Skipping because virtual"
     elsif !host_and_device_resource?(resource) && resource.appliable_to_host? && for_network_device

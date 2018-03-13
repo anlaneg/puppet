@@ -91,12 +91,13 @@
 # merged hash. If the same key exists in multiple source hashes, Puppet will
 # recursively merge hash or array values (with duplicate values removed from
 # arrays). For conflicting scalar values, the highest-priority value will win.
-# * `{'strategy' => 'first|unique|hash'}` --- Same as the string versions of these
-# merge behaviors.
+# * `{'strategy' => 'first'}`, `{'strategy' => 'unique'}`,
+# or `{'strategy' => 'hash'}` --- Same as the string versions of these merge behaviors.
 # * `{'strategy' => 'deep', <DEEP OPTION> => <VALUE>, ...}` --- Same as `'deep'`,
 # but can adjust the merge with additional options. The available options are:
 #     * `'knockout_prefix'` (string or undef) --- A string prefix to indicate a
-#     value should be _removed_ from the final result. Defaults to `undef`, which
+#     value should be _removed_ from the final result. If a value is exactly equal
+#     to the prefix, it will knockout the entire element. Defaults to `undef`, which
 #     disables this feature.
 #     * `'sort_merged_arrays'` (boolean) --- Whether to sort all arrays that are
 #     merged together. Defaults to `false`.

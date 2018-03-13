@@ -66,8 +66,8 @@ module Puppet
         Make sure to omit the following in this attribute (and specify them in
         other attributes):
 
-        * Key headers (e.g. 'ssh-rsa') --- put these in the `type` attribute.
-        * Key identifiers / comments (e.g. 'joe@joescomputer.local') --- put these in
+        * Key headers, such as 'ssh-rsa' --- put these in the `type` attribute.
+        * Key identifiers / comments, such as 'joe@joescomputer.local' --- put these in
           the `name` attribute/resource title."
 
       validate do |value|
@@ -82,9 +82,9 @@ module Puppet
 
     newproperty(:target) do
       desc "The absolute filename in which to store the SSH key. This
-        property is optional and should only be used in cases where keys
-        are stored in a non-standard location (i.e.` not in
-        `~user/.ssh/authorized_keys`)."
+        property is optional and should be used only in cases where keys
+        are stored in a non-standard location, for instance when not in
+        `~user/.ssh/authorized_keys`."
 
       defaultto :absent
 
@@ -111,22 +111,6 @@ module Puppet
         should be specified as an array."
 
       defaultto do :absent end
-
-      def is_to_s(value)
-        if value == :absent or value.include?(:absent)
-          super
-        else
-          value.join(",")
-        end
-      end
-
-      def should_to_s(value)
-        if value == :absent or value.include?(:absent)
-          super
-        else
-          value.join(",")
-        end
-      end
 
       validate do |value|
         unless value == :absent or value =~ /^[-a-z0-9A-Z_]+(?:=\".*?\")?$/

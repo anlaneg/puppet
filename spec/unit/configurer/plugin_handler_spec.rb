@@ -4,33 +4,61 @@ require 'puppet/configurer'
 require 'puppet/configurer/plugin_handler'
 
 describe Puppet::Configurer::PluginHandler do
-  let(:factory)       { Puppet::Configurer::DownloaderFactory.new }
-  let(:pluginhandler) { Puppet::Configurer::PluginHandler.new(factory) }
+  let(:pluginhandler) { Puppet::Configurer::PluginHandler.new() }
   let(:environment)   { Puppet::Node::Environment.create(:myenv, []) }
 
-  before :each do
-    # PluginHandler#load_plugin has an extra-strong rescue clause
-    # this mock is to make sure that we don't silently ignore errors
-    Puppet.expects(:err).never
+  context "server agent version is 5.3.4" do
+    before :each do
+      # PluginHandler#load_plugin has an extra-strong rescue clause
+      # this mock is to make sure that we don't silently ignore errors
+      Puppet.expects(:err).never
+      # Server_agent version needs to be at 5.3.4 in order to mount locales
+      Puppet.push_context({:server_agent_version => "5.3.4"})
+    end
+
+    it "downloads plugins, facts, and locales" do
+      Puppet::Configurer::Downloader.any_instance.expects(:evaluate).times(3).returns([])
+
+      pluginhandler.download_plugins(environment)
+    end
+
+    it "returns downloaded plugin, fact, and locale filenames" do
+      Puppet::Configurer::Downloader.any_instance.expects(:evaluate).times(3).returns(%w[/a]).then.returns(%w[/b]).then.returns(%w[/c])
+
+      expect(pluginhandler.download_plugins(environment)).to match_array(%w[/a /b /c])
+    end
   end
 
-  it "downloads plugins and facts" do
-    plugin_downloader = stub('plugin-downloader', :evaluate => [])
-    facts_downloader = stub('facts-downloader', :evaluate => [])
+  context "server agent version is 5.3.3" do
+    before :each do
+      # PluginHandler#load_plugin has an extra-strong rescue clause
+      # this mock is to make sure that we don't silently ignore errors
+      Puppet.expects(:err).never
+      # Server_agent version needs to be at 5.3.4 in order to mount locales
+      Puppet.push_context({:server_agent_version => "5.3.3"})
+    end
 
-    factory.expects(:create_plugin_downloader).returns(plugin_downloader)
-    factory.expects(:create_plugin_facts_downloader).returns(facts_downloader)
+    it "returns downloaded plugin, fact, but not locale filenames" do
+      Puppet::Configurer::Downloader.any_instance.expects(:evaluate).times(2).returns(%w[/a]).then.returns(%w[/b])
 
-    pluginhandler.download_plugins(environment)
+      expect(pluginhandler.download_plugins(environment)).to match_array(%w[/a /b])
+    end
   end
 
-  it "returns downloaded plugin and fact filenames" do
-    plugin_downloader = stub('plugin-downloader', :evaluate => %w[/a])
-    facts_downloader = stub('facts-downloader', :evaluate => %w[/b])
+  context "blank server agent version" do
+    before :each do
+      # PluginHandler#load_plugin has an extra-strong rescue clause
+      # this mock is to make sure that we don't silently ignore errors
+      Puppet.expects(:err).never
+      # Server_agent version needs to be at 5.3.4 in order to mount locales
+      # A blank version will default to 0.0
+      Puppet.push_context({:server_agent_version => ""})
+    end
 
-    factory.expects(:create_plugin_downloader).returns(plugin_downloader)
-    factory.expects(:create_plugin_facts_downloader).returns(facts_downloader)
+    it "returns downloaded plugin, fact, but not locale filenames" do
+      Puppet::Configurer::Downloader.any_instance.expects(:evaluate).times(2).returns(%w[/a]).then.returns(%w[/b])
 
-    expect(pluginhandler.download_plugins(environment)).to match_array(%w[/a /b])
+      expect(pluginhandler.download_plugins(environment)).to match_array(%w[/a /b])
+    end
   end
 end

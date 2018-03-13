@@ -65,12 +65,6 @@ describe Puppet::Application do
         @klass.find("ThisShallNeverEverEverExist")
       }.to raise_error(LoadError)
     end
-
-    it "#12114: should prevent File namespace collisions" do
-      # have to require the file face once, then the second time around it would fail
-      expect(@klass.find("File")).to eq(Puppet::Application::File)
-      expect(@klass.find("File")).to eq(Puppet::Application::File)
-    end
   end
 
   describe "#available_application_names" do
@@ -105,6 +99,24 @@ describe Puppet::Application do
     end
   end
 
+  describe ".environment_mode" do
+    it "should default to :local" do
+      expect(@appclass.get_environment_mode).to eq(:local)
+    end
+
+    it "should set and get a value" do
+      @appclass.environment_mode :remote
+      expect(@appclass.get_environment_mode).to eq(:remote)
+    end
+
+    it "should error if given a random symbol" do
+      expect{@appclass.environment_mode :foo}.to raise_error(/Invalid environment mode/)
+    end
+
+    it "should error if given a string" do
+      expect{@appclass.environment_mode 'local'}.to raise_error(/Invalid environment mode/)
+    end
+  end
 
 
   # These tests may look a little weird and repetative in its current state;

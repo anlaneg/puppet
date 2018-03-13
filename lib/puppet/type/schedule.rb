@@ -18,8 +18,8 @@ module Puppet
       time within that schedule, then the resources will get applied;
       otherwise, that work may never get done.
 
-      Thus, it is advisable to use wider scheduling (e.g., over a couple of
-      hours) combined with periods and repetitions.  For instance, if you
+      Thus, it is advisable to use wider scheduling (for example, over a couple
+      of hours) combined with periods and repetitions.  For instance, if you
       wanted to restrict certain resources to only running once, between
       the hours of two and 4 AM, then you would use this schedule:
 
@@ -36,7 +36,7 @@ module Puppet
       because they will be outside the scheduled range.
 
       Puppet automatically creates a schedule for each of the valid periods
-      with the same name as that period (e.g., hourly and daily).
+      with the same name as that period (such as hourly and daily).
       Additionally, a schedule named `puppet` is created and used as the
       default, with the following attributes:
 
@@ -83,7 +83,7 @@ module Puppet
         This is mostly useful for restricting certain resources to being
         applied in maintenance windows or during off-peak hours. Multiple
         ranges can be applied in array context. As a convenience when specifying
-        ranges, you may cross midnight (e.g.: range => "22:00 - 04:00").
+        ranges, you can cross midnight (for example, `range => "22:00 - 04:00"`).
       EOT
 
       # This is lame; properties all use arrays as values, but parameters don't.
@@ -225,9 +225,9 @@ module Puppet
     end
 
     newparam(:periodmatch) do
-      desc "Whether periods should be matched by number (e.g., the two times
-        are in the same hour) or by distance (e.g., the two times are
-        60 minutes apart)."
+      desc "Whether periods should be matched by a numeric value (for instance,
+        whether two times are in the same hour) or by their chronological
+        distance apart (whether two times are 60 minutes apart)."
 
       newvalues(:number, :distance)
 
@@ -241,8 +241,8 @@ module Puppet
 
         Note that the period defines how often a given resource will get
         applied but not when; if you would like to restrict the hours
-        that a given resource can be applied (e.g., only at night during
-        a maintenance window), then use the `range` attribute.
+        that a given resource can be applied (for instance, only at night
+        during a maintenance window), then use the `range` attribute.
 
         If the provided periods are not sufficient, you can provide a
         value to the *repeat* attribute, which will cause Puppet to
@@ -258,9 +258,9 @@ module Puppet
 
         At the moment, Puppet cannot guarantee that level of repetition; that
         is, the resource can applied _up to_ every 10 minutes, but internal
-        factors might prevent it from actually running that often (e.g. if a
-        Puppet run is still in progress when the next run is scheduled to start,
-        that next run will be suppressed).
+        factors might prevent it from actually running that often (for instance,
+        if a Puppet run is still in progress when the next run is scheduled to
+        start, that next run will be suppressed).
 
         See the `periodmatch` attribute for tuning whether to match
         times by their distance apart or by their specific value.
@@ -346,9 +346,9 @@ module Puppet
     newparam(:weekday) do
       desc <<-EOT
         The days of the week in which the schedule should be valid.
-        You may specify the full day name (Tuesday), the three character
-        abbreviation (Tue), or a number corresponding to the day of the
-        week where 0 is Sunday, 1 is Monday, etc. Multiple days can be specified
+        You may specify the full day name 'Tuesday', the three character
+        abbreviation 'Tue', or a number (as a string or as an integer) corresponding to the day of the
+        week where 0 is Sunday, 1 is Monday, and so on. Multiple days can be specified
         as an array. If not specified, the day of the week will not be
         considered in the schedule.
 
@@ -369,11 +369,20 @@ module Puppet
       validate do |values|
         values = [values] unless values.is_a?(Array)
         values.each { |value|
-          unless value.is_a?(String) and
-              (value =~ /^[0-6]$/ or value =~ /^(Mon|Tues?|Wed(?:nes)?|Thu(?:rs)?|Fri|Sat(?:ur)?|Sun)(day)?$/i)
-            raise ArgumentError, _("%s is not a valid day of the week") % value
+          if weekday_integer?(value) || weekday_string?(value)
+            value
+          else
+            raise ArgumentError, _("%{value} is not a valid day of the week") % { value: value }
           end
         }
+      end
+
+      def weekday_integer?(value)
+        value.is_a?(Integer) && (0..6).include?(value)
+      end
+
+      def weekday_string?(value)
+        value.is_a?(String) && (value =~ /^[0-6]$/ || value =~ /^(Mon|Tues?|Wed(?:nes)?|Thu(?:rs)?|Fri|Sat(?:ur)?|Sun)(day)?$/i)
       end
 
       weekdays = {
@@ -390,14 +399,17 @@ module Puppet
         values = [values] unless values.is_a?(Array)
         ret = {}
 
-        values.each { |value|
-           if value =~ /^[0-6]$/
-              index = value.to_i
-           else
-              index = weekdays[value[0,3].downcase]
-           end
-            ret[index] = true
-        }
+        values.each do |value|
+          case value
+          when /^[0-6]$/
+            index = value.to_i
+          when 0..6
+            index = value
+          else
+            index = weekdays[value[0,3].downcase]
+          end
+          ret[index] = true
+        end
         ret
       end
 

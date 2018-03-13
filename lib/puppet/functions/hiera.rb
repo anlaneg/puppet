@@ -2,6 +2,11 @@ require 'hiera/puppet_function'
 # Performs a standard priority lookup of the hierarchy and returns the most specific value
 # for a given key. The returned value can be any type of data.
 #
+# This function is deprecated in favor of the `lookup` function. While this function
+# continues to work, it does **not** support:
+# * `lookup_options` stored in the data
+# * lookup across global, environment, and module layers
+#
 # The function takes up to three arguments, in this order:
 #
 # 1. A string key that Hiera searches for in the hierarchy. **Required**.
@@ -20,7 +25,7 @@ require 'hiera/puppet_function'
 #
 # @example Using `hiera`
 #
-# ~~~ yaml
+# ```yaml
 # # Assuming hiera.yaml
 # # :hierarchy:
 # #   - web01.example.com
@@ -39,16 +44,16 @@ require 'hiera/puppet_function'
 #   regular:
 #     - "Iris Jackson"
 #     - "Kelly Lambert"
-# ~~~
+# ```
 #
-# ~~~ puppet
+# ```puppet
 # # Assuming we are not web01.example.com:
 #
 # $users = hiera('users', undef)
 #
 # # $users contains {admins  => ["Edith Franklin", "Ginny Hamilton"],
 # #                  regular => ["Iris Jackson", "Kelly Lambert"]}
-# ~~~
+# ```
 #
 # You can optionally generate the default value with a
 # [lambda](https://docs.puppetlabs.com/puppet/latest/reference/lang_lambdas.html) that
@@ -56,7 +61,7 @@ require 'hiera/puppet_function'
 #
 # @example Using `hiera` with a lambda
 #
-# ~~~ puppet
+# ```puppet
 # # Assuming the same Hiera data as the previous example:
 #
 # $users = hiera('users') | $key | { "Key \'${key}\' not found" }
@@ -65,14 +70,16 @@ require 'hiera/puppet_function'
 # #                  regular => ["Iris Jackson", "Kelly Lambert"]}
 # # If hiera couldn't match its key, it would return the lambda result,
 # # "Key 'users' not found".
-# ~~~
+# ```
 #
 # The returned value's data type depends on the types of the results. In the example 
 # above, Hiera matches the 'users' key and returns it as a hash.
 #
 # See
-# [the documentation](https://docs.puppetlabs.com/hiera/latest/puppet.html#hiera-lookup-functions)
-# for more information about Hiera lookup functions.
+# [the 'Using the lookup function' documentation](https://docs.puppet.com/puppet/latest/hiera_use_function.html) for how to perform lookup of data.
+# Also see
+# [the 'Using the deprecated hiera functions' documentation](https://docs.puppet.com/puppet/latest/hiera_use_hiera_functions.html)
+# for more information about the Hiera 3 functions.
 #
 # @since 4.0.0
 #

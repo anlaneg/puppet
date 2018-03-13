@@ -149,6 +149,21 @@ describe Puppet::Indirector::Request do
         expect(request.key.encoding).to eq(Encoding::UTF_8)
       end
 
+      it "should set the request key properly given a UTF-8 URI" do
+        # different UTF-8 widths
+        # 1-byte A
+        # 2-byte ۿ - http://www.fileformat.info/info/unicode/char/06ff/index.htm - 0xDB 0xBF / 219 191
+        # 3-byte ᚠ - http://www.fileformat.info/info/unicode/char/16A0/index.htm - 0xE1 0x9A 0xA0 / 225 154 160
+        # 4-byte <U+070E> - http://www.fileformat.info/info/unicode/char/2070E/index.htm - 0xF0 0xA0 0x9C 0x8E / 240 160 156 142
+        mixed_utf8 = "A\u06FF\u16A0\u{2070E}" # Aۿᚠ<U+070E>
+
+        key = "a/path/stu ff/#{mixed_utf8}"
+        req = Puppet::Indirector::Request.new(:ind, :method, "http:///#{key}", nil)
+        expect(req.key).to eq(key)
+        expect(req.key.encoding).to eq(Encoding::UTF_8)
+        expect(req.uri).to eq("http:///#{key}")
+      end
+
       it "should set the :uri attribute to the full URI" do
         expect(Puppet::Indirector::Request.new(:ind, :method, "http:///a/path/stu ff", nil).uri).to eq('http:///a/path/stu ff')
       end
@@ -230,10 +245,6 @@ describe Puppet::Indirector::Request do
     expect(Puppet::Indirector::Request.new(:myind, :find, "key", nil).description).to eq("/myind/key")
   end
 
-  it "should be able to return the URI-escaped key" do
-    expect(Puppet::Indirector::Request.new(:myind, :find, "my key", nil).escaped_key).to eq(URI.escape("my key"))
-  end
-
   it "should set its environment to an environment instance when a string is specified as its environment" do
     env = Puppet::Node::Environment.create(:foo, [])
 
@@ -249,8 +260,6 @@ describe Puppet::Indirector::Request do
   end
 
   it "should use the current environment when none is provided" do
-    configured = Puppet::Node::Environment.create(:foo, [])
-
     Puppet[:environment] = "foo"
 
     expect(Puppet::Indirector::Request.new(:myind, :find, "my key", nil).environment).to eq(Puppet.lookup(:current_environment))
@@ -504,6 +513,47 @@ describe Puppet::Indirector::Request do
 
     it "should be remote if node and ip are set" do
       expect(request(:node => 'example.com', :ip => '127.0.0.1')).to be_remote
+    end
+  end
+
+  describe "failover" do
+    it "should use the provided failover host and port" do
+      Puppet.override(:server => 'myhost', :serverport => 666) do
+        req = Puppet::Indirector::Request.new('node', 'find', 'localhost', nil)
+        req.do_request() do |request|
+          expect(request.server).to eq('myhost')
+          expect(request.port).to eq(666)
+        end
+      end
+    end
+
+    it "should not use raw settings when failover fails" do
+      Puppet.override(:server => nil, :serverport => nil) do
+        req = Puppet::Indirector::Request.new('node', 'find', 'localhost', nil)
+        req.do_request() do |request|
+          expect(request.server).to be_nil
+          expect(request.port).to be_nil
+          expect(Puppet.settings[:server]).not_to be_nil
+          expect(Puppet.settings[:masterport]).not_to be_nil
+        end
+      end
+    end
+
+    it "should use server_list when set and failover has not occured" do
+      Puppet.settings[:server_list] = [['myhost',666]]
+      req = Puppet::Indirector::Request.new('node', 'find', 'localhost', nil)
+      req.do_request() do |request|
+        expect(request.server).to eq('myhost')
+        expect(request.port).to eq(666)
+      end
+    end
+
+    it "should use server when server_list is not set" do
+      req = Puppet::Indirector::Request.new('node', 'find', 'localhost', nil)
+      req.do_request() do |request|
+        expect(request.server).to eq(Puppet.settings[:server])
+        expect(request.port).to eq(Puppet.settings[:masterport])
+      end
     end
   end
 end

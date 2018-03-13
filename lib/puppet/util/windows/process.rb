@@ -232,13 +232,21 @@ module Puppet::Util::Windows::Process
   # Note - Some env variable names start with '=' and are excluded from the return value
   # Note - The env_ptr MUST be freed using the FreeEnvironmentStringsW function
   # Note - There is no technical limitation to the size of the environment block returned.
-  #   However a pracitcal limit of 64K is used as no single environment variable can exceed 32KB
+  #   However a practical limit of 64K is used as no single environment variable can exceed 32KB
   def get_environment_strings
     env_ptr = GetEnvironmentStringsW()
 
-    pairs = env_ptr.read_arbitrary_wide_string_up_to(65534, :double_null)
+    # pass :invalid => :replace to the Ruby String#encode to use replacement characters
+    pairs = env_ptr.read_arbitrary_wide_string_up_to(65534, :double_null, { :invalid => :replace })
       .split(?\x00)
       .reject { |env_str| env_str.nil? || env_str.empty? || env_str[0] == '=' }
+      .reject do |env_str|
+        # reject any string containing the Unicode replacement character
+        if env_str.include?("\uFFFD")
+          Puppet.warning(_("Discarding environment variable %{string} which contains invalid bytes") % { string: env_str })
+          true
+        end
+      end
       .map { |env_pair| env_pair.split('=', 2) }
     Hash[ pairs ]
   ensure

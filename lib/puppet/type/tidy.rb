@@ -105,7 +105,7 @@ Puppet::Type.newtype(:tidy) do
     desc "Tidy files whose age is equal to or greater than
       the specified time.  You can choose seconds, minutes,
       hours, days, or weeks by specifying the first letter of any
-      of those words (e.g., '1w').
+      of those words (for example, '1w' represents one week).
 
       Specifying 0 will remove all files."
 
@@ -224,7 +224,14 @@ Puppet::Type.newtype(:tidy) do
   # Make a file resource to remove a given file.
   def mkfile(path)
     # Force deletion, so directories actually get deleted.
-    Puppet::Type.type(:file).new :path => path, :backup => self[:backup], :ensure => :absent, :force => true
+    parameters = {
+      :path => path, :backup => self[:backup],
+      :ensure => :absent, :force => true
+    }
+
+    parameters[:noop] = self[:noop] unless self[:noop].nil?
+
+    Puppet::Type.type(:file).new(parameters)
   end
 
   def retrieve
@@ -260,8 +267,10 @@ Puppet::Type.newtype(:tidy) do
     end
     found_files = files.find_all { |path| tidy?(path) }.collect { |path| mkfile(path) }
     result = found_files.each { |file| debug "Tidying #{file.ref}" }.sort { |a,b| b[:path] <=> a[:path] }
-    #TRANSLATORS "Tidy" is a program name and should not be translated
-    notice _("Tidying %{count} files") % { count: found_files.size }
+    if found_files.size > 0
+      #TRANSLATORS "Tidy" is a program name and should not be translated
+      notice _("Tidying %{count} files") % { count: found_files.size }
+    end
 
     # No need to worry about relationships if we don't have rmdirs; there won't be
     # any directories.
@@ -324,10 +333,10 @@ Puppet::Type.newtype(:tidy) do
   def stat(path)
     begin
       Puppet::FileSystem.lstat(path)
-    rescue Errno::ENOENT => error
+    rescue Errno::ENOENT
       info _("File does not exist")
       return nil
-    rescue Errno::EACCES => error
+    rescue Errno::EACCES
       #TRANSLATORS "stat" is a program name and should not be translated
       warning _("Could not stat; permission denied")
       return nil

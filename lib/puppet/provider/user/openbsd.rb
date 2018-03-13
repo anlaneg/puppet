@@ -45,8 +45,9 @@ Puppet::Type.type(:user).provide :openbsd, :parent => :useradd do
           # sp_loginclass field.
           begin
             return unmunge(shadow_property, ent.send(method))
-          rescue => detail
-            Puppet.warning "ruby-shadow doesn't support #{method}"
+          rescue
+            #TRANSLATORS 'ruby-shadow' is a Ruby gem library
+            Puppet.warning _("ruby-shadow doesn't support %{method}") % { method: method }
           end
         end
       end

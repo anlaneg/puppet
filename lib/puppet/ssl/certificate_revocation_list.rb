@@ -1,5 +1,6 @@
 require 'puppet/ssl/base'
 require 'puppet/indirector'
+require 'puppet/ssl/certificate_signer'
 
 # Manage the CRL.
 class Puppet::SSL::CertificateRevocationList < Puppet::SSL::Base
@@ -39,7 +40,7 @@ DOC
   # The name doesn't actually matter; there's only one CRL.
   # We just need the name so our Indirector stuff all works more easily.
   def initialize(fakename)
-    @name = _("crl")
+    @name = "crl"
   end
 
   # Revoke the certificate with serial number SERIAL issued by this
@@ -105,6 +106,6 @@ private
   end
 
   def sign_with(cakey)
-    @content.sign(cakey, OpenSSL::Digest::SHA1.new)
+    Puppet::SSL::CertificateSigner.new.sign(@content, cakey)
   end
 end

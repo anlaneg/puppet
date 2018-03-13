@@ -8,28 +8,30 @@ class Puppet::Relationship
 
   # FormatSupport for serialization methods
   include Puppet::Network::FormatSupport
+  include Puppet::Util::PsychSupport
 
   attr_accessor :source, :target, :callback
 
   attr_reader :event
 
   def self.from_data_hash(data)
-    source = data["source"]
-    target = data["target"]
+    source = data['source']
+    target = data['target']
 
     args = {}
     if event = data["event"]
-      args[:event] = event
+      args[:event] = :"#{event}"
     end
     if callback = data["callback"]
-      args[:callback] = callback
+      args[:callback] = :"#{callback}"
     end
 
     new(source, target, args)
   end
 
   def event=(event)
-    raise ArgumentError, "You must pass a callback for non-NONE events" if event != :NONE and ! callback
+    #TRANSLATORS 'NONE' should not be translated
+    raise ArgumentError, _("You must pass a callback for non-NONE events") if event != :NONE and ! callback
     @event = event
   end
 
@@ -76,11 +78,8 @@ class Puppet::Relationship
       'source' => source.to_s,
       'target' => target.to_s
     }
-
-    ["event", "callback"].each do |attr|
-      next unless value = send(attr)
-      data[attr] = value
-    end
+    data['event'] = event.to_s unless event.nil?
+    data['callback'] = callback.to_s unless callback.nil?
     data
   end
 

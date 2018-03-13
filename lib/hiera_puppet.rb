@@ -11,7 +11,7 @@ module HieraPuppet
     answer = hiera.lookup(key, default, scope, override, resolution_type)
 
     if answer.nil?
-      raise(Puppet::ParseError, "Could not find data item #{key} in any Hiera data file and no default supplied")
+      raise Puppet::ParseError, _("Could not find data item %{key} in any Hiera data file and no default supplied") % { key: key }
     end
 
     answer
@@ -38,7 +38,7 @@ module HieraPuppet
     end
 
     if args.empty?
-      raise(Puppet::ParseError, "Please supply a parameter to perform a Hiera lookup")
+      raise Puppet::ParseError, _("Please supply a parameter to perform a Hiera lookup")
     end
 
     key      = args[0]
@@ -71,7 +71,7 @@ module HieraPuppet
     if Puppet::FileSystem.exist?(hiera_config)
       hiera_config
     else
-      Puppet.warning "Config file #{hiera_config} not found, using Hiera defaults"
+      Puppet.warning _("Config file %{hiera_config} not found, using Hiera defaults") % { hiera_config: hiera_config }
       nil
     end
   end

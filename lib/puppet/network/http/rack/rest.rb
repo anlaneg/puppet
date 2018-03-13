@@ -35,7 +35,7 @@ class Puppet::Network::HTTP::RackREST
   end
 
   def set_content_type(response, format)
-    response[ContentType] = format_to_mime(format)
+    response[ContentType] = format
   end
 
   # produce the body of the response
@@ -87,7 +87,8 @@ class Puppet::Network::HTTP::RackREST
     # in the indirector / HTTP layer which consumes this path, however, assumes
     # that it has already been unescaped, so it is unescaped here.
     if request.path
-      URI.unescape(request.path)
+      # don't use CGI.unescape which mangles space handling
+      URI.unescape(request.path.encode(Encoding::UTF_8))
     end
   end
 

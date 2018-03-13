@@ -52,9 +52,10 @@ describe Puppet::Network::HTTP::Handler do
 
     it "raises an error if multiple routes with the same path regex are registered" do
       expect do
-        handler = PuppetSpec::Handler.new(
+        PuppetSpec::Handler.new(
           Puppet::Network::HTTP::Route.path(%r{^/foo}).get(respond("ignored")),
-          Puppet::Network::HTTP::Route.path(%r{^/foo}).post(respond("also ignored")))
+          Puppet::Network::HTTP::Route.path(%r{^/foo}).post(respond("also ignored"))
+        )
       end.to raise_error(ArgumentError)
     end
 
@@ -68,7 +69,7 @@ describe Puppet::Network::HTTP::Handler do
 
       res_body = JSON(res[:body])
 
-      expect(res[:content_type_header]).to eq("application/json")
+      expect(res[:content_type_header]).to eq("application/json; charset=utf-8")
       expect(res_body["issue_kind"]).to eq("HANDLER_NOT_FOUND")
       expect(res_body["message"]).to eq("Not Found: No route for GET /vtest/foo")
       expect(res[:status]).to eq(404)
@@ -92,12 +93,9 @@ describe Puppet::Network::HTTP::Handler do
 
       res_body = JSON(res[:body])
 
-      expect(res[:content_type_header]).to eq("application/json")
+      expect(res[:content_type_header]).to eq("application/json; charset=utf-8")
       expect(res_body["issue_kind"]).to eq(Puppet::Network::HTTP::Issues::RUNTIME_ERROR.to_s)
       expect(res_body["message"]).to eq("Server Error: the sky is falling!")
-      expect(res_body["stacktrace"].is_a?(Array) && !res_body["stacktrace"].empty?).to be_truthy
-      expect(res_body["stacktrace"][0]).to match(/The 'stacktrace' property is deprecated/)
-      expect(res_body["stacktrace"] & original_stacktrace).to be_empty
       expect(res[:status]).to eq(500)
     end
 
@@ -142,7 +140,7 @@ describe Puppet::Network::HTTP::Handler do
     it "should still find the correct format if content type contains charset information" do
       request = Puppet::Network::HTTP::Request.new({ 'content-type' => "text/plain; charset=UTF-8" },
                                                    {}, 'GET', '/', nil)
-      expect(request.format).to eq("s")
+      expect(request.formatter.name).to eq(:s)
     end
 
     # PUP-3272

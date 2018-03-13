@@ -338,7 +338,7 @@ class Puppet::Parameter
       self.resource = resource
       options.delete(:resource)
     else
-      raise Puppet::DevError, "No resource set for #{self.class.name}"
+      raise Puppet::DevError, _("No resource set for %{name}") % { name: self.class.name }
     end
 
     set_options(options)
@@ -425,7 +425,7 @@ class Puppet::Parameter
       Puppet.debug "Reraising #{detail}"
       raise
     rescue => detail
-      raise Puppet::DevError, "Munging failed for value #{value.inspect} in class #{self.name}: #{detail}", detail.backtrace
+      raise Puppet::DevError, _("Munging failed for value %{value} in class %{class_name}: %{detail}") % { value: value.inspect, class_name: self.name, detail: detail }, detail.backtrace
     end
     ret
   end
@@ -459,7 +459,7 @@ class Puppet::Parameter
     rescue Puppet::Error, TypeError
       raise
     rescue => detail
-      raise Puppet::DevError, "Validate method failed for class #{self.name}: #{detail}", detail.backtrace
+      raise Puppet::DevError, _("Validate method failed for class %{class_name}: %{detail}") % { class_name: self.name, detail: detail }, detail.backtrace
     end
   end
 
@@ -543,39 +543,14 @@ class Puppet::Parameter
   end
 
   # Produces a String with the value formatted for display to a human.
-  # When the parameter value is a:
   #
-  # * **single valued parameter value** the result is produced on the
-  #   form `'value'` where _value_ is the string form of the parameter's value.
-  #
-  # * **Array** the list of values is enclosed in `[]`, and
-  #   each produced value is separated by a comma.
-  #
-  # * **Hash** value is output with keys in sorted order enclosed in `{}` with each entry formatted
-  #   on the form `'k' => v` where
-  #   `k` is the key in string form and _v_ is the value of the key. Entries are comma separated.
-  #
-  # For both Array and Hash this method is called recursively to format contained values.
-  # @note this method does not protect against infinite structures.
+  # The output is created using the StringConverter with format '%#p' to produce
+  # human readable code that is understood by puppet.
   #
   # @return [String] The formatted value in string form.
   #
   def self.format_value_for_display(value)
-    if value.is_a? Array
-      formatted_values = value.collect {|v| format_value_for_display(v)}.join(', ')
-      "[#{formatted_values}]"
-    elsif value.is_a? Hash
-      # Sorting the hash keys for display is largely for having stable
-      # output to test against, but also helps when scanning for hash
-      # keys, since they will be in ASCIIbetical order.
-      hash = value.keys.sort {|a,b| a.to_s <=> b.to_s}.collect do |k|
-        "'#{k}' => #{format_value_for_display(value[k])}"
-      end.join(', ')
-
-      "{#{hash}}"
-    else
-      "'#{value}'"
-    end
+    Puppet::Pops::Types::StringConverter.convert(value, Puppet::Pops::Types::StringConverter::DEFAULT_PARAMETER_FORMAT)
   end
 
   # @comment Document post_compile_hook here as it does not exist anywhere (called from type if implemented)

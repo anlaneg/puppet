@@ -82,7 +82,7 @@ class Puppet::Resource::Catalog < Puppet::Graph::SimpleGraph
     tag(*classes)
   end
 
-  # Returns [typename, title] when given a String with "Type[title]". 
+  # Returns [typename, title] when given a String with "Type[title]".
   # Returns [nil, nil] if '[' ']' not detected.
   #
   def title_key_for_ref( ref )
@@ -100,7 +100,10 @@ class Puppet::Resource::Catalog < Puppet::Graph::SimpleGraph
     resources.each do |resource|
       other_title_key = title_key_for_ref(other.ref)
       idx = @resources.index(other_title_key)
-      raise ArgumentError, "Cannot add resource #{resource.ref} before #{other.ref} because #{other.ref} is not yet in the catalog" if idx.nil?
+      if idx.nil?
+        raise ArgumentError, _("Cannot add resource %{resource_1} before %{resource_2} because %{resource_2} is not yet in the catalog") %
+            { resource_1: resource.ref, resource_2: other.ref }
+      end
       add_one_resource(resource, idx)
     end
   end
@@ -112,7 +115,10 @@ class Puppet::Resource::Catalog < Puppet::Graph::SimpleGraph
     resources.each do |resource|
       other_title_key = title_key_for_ref(other.ref)
       idx = @resources.index(other_title_key)
-      raise ArgumentError, "Cannot add resource #{resource.ref} after #{other.ref} because #{other.ref} is not yet in the catalog" if idx.nil?
+      if idx.nil?
+        raise ArgumentError, _("Cannot add resource %{resource_1} after %{resource_2} because %{resource_2} is not yet in the catalog") %
+            { resource_1: resource.ref, resource_2: other.ref }
+      end
       add_one_resource(resource, idx+1)
     end
   end
@@ -193,10 +199,17 @@ class Puppet::Resource::Catalog < Puppet::Graph::SimpleGraph
     # isn't sufficient.
     if existing = @resource_table[newref]
       return if existing == resource
-      resource_declaration = " at #{resource.file}:#{resource.line}" if resource.file and resource.line
-      existing_declaration = " at #{existing.file}:#{existing.line}" if existing.file and existing.line
-      #TRANSLATORS "resource" here is a Puppet type and should not be translated
-      msg = _("Cannot alias %{ref} to %{key}%{resource_declaration}; resource %{newref} already declared%{existing_declaration}") % { ref: ref, key: key.inspect, resource_declaration: resource_declaration, newref: newref.inspect, existing_declaration: existing_declaration }
+      resource_declaration = Puppet::Util::Errors.error_location(resource.file, resource.line)
+      msg = if resource_declaration.empty?
+              #TRANSLATORS 'alias' should not be translated
+              _("Cannot alias %{resource} to %{key}; resource %{newref} already declared") %
+                  { resource: ref, key: key.inspect, newref: newref.inspect }
+            else
+              #TRANSLATORS 'alias' should not be translated
+              _("Cannot alias %{resource} to %{key} at %{resource_declaration}; resource %{newref} already declared") %
+                  { resource: ref, key: key.inspect, resource_declaration: resource_declaration, newref: newref.inspect }
+            end
+      msg += Puppet::Util::Errors.error_location_with_space(existing.file, existing.line)
       raise ArgumentError, msg
     end
     @resource_table[newref] = resource
@@ -210,13 +223,6 @@ class Puppet::Resource::Catalog < Puppet::Graph::SimpleGraph
   #   The report object to log this transaction to. This is optional,
   #   and the resulting transaction will create a report if not
   #   supplied.
-  # @option options [Array[String]] :tags
-  #   Tags used to filter the transaction. If supplied then only
-  #   resources tagged with any of these tags will be evaluated.
-  # @option options [Boolean] :ignoreschedules
-  #   Ignore schedules when evaluating resources
-  # @option options [Boolean] :for_network_device
-  #   Whether this catalog is for a network device
   #
   # @return [Puppet::Transaction] the transaction created for this
   #   application
@@ -278,7 +284,7 @@ class Puppet::Resource::Catalog < Puppet::Graph::SimpleGraph
   # Create a new resource and register it in the catalog.
   def create_resource(type, options)
     unless klass = Puppet::Type.type(type)
-      raise ArgumentError, "Unknown resource type #{type}"
+      raise ArgumentError, _("Unknown resource type %{type}") % { type: type }
     end
     return unless resource = klass.new(options)
 
@@ -431,15 +437,8 @@ class Puppet::Resource::Catalog < Puppet::Graph::SimpleGraph
     end
 
     if resources = data['resources']
-      # TODO: The deserializer needs a loader in order to deserialize types defined using the puppet language.
-      json_deserializer = nil
-      if resources.any? { |res| res.has_key?('ext_parameters') }
-        json_deserializer = Puppet::Pops::Serialization::Deserializer.new(
-            Puppet::Pops::Serialization::JSON::Reader.new([]),
-            Puppet::Pops::Loaders.catalog_loader)
-      end
       result.add_resource(*resources.collect do |res|
-        Puppet::Resource.from_data_hash(res, json_deserializer)
+        Puppet::Resource.from_data_hash(res)
       end)
     end
 
@@ -447,12 +446,14 @@ class Puppet::Resource::Catalog < Puppet::Graph::SimpleGraph
       edges.each do |edge_hash|
         edge = Puppet::Relationship.from_data_hash(edge_hash)
         unless source = result.resource(edge.source)
-          raise ArgumentError, "Could not intern from data: Could not find relationship source #{edge.source.inspect} for #{edge.target.to_s}"
+          raise ArgumentError, _("Could not intern from data: Could not find relationship source %{source} for %{target}") %
+              { source: edge.source.inspect, target: edge.target.to_s }
         end
         edge.source = source
 
         unless target = result.resource(edge.target)
-          raise ArgumentError, "Could not intern from data: Could not find relationship target #{edge.target.inspect} for #{edge.source.to_s}"
+          raise ArgumentError, _("Could not intern from data: Could not find relationship target %{target} for %{source}") %
+              { target: edge.target.inspect, source: edge.source.to_s }
         end
         edge.target = target
 
@@ -491,25 +492,16 @@ class Puppet::Resource::Catalog < Puppet::Graph::SimpleGraph
       h
     end
 
-    resources = if @resources.empty?
-        []
-      elsif environment_instance.rich_data?
-        json_serializer = Puppet::Pops::Serialization::Serializer.new(Puppet::Pops::Serialization::JSON::Writer.new(''))
-        @resources.collect { |v| @resource_table[v].to_data_hash(json_serializer) }
-      else
-        @resources.collect { |v| @resource_table[v].to_data_hash }
-      end
-
     {
-      'tags'      => tags,
+      'tags'      => tags.to_a,
       'name'      => name,
       'version'   => version,
       'code_id'   => code_id,
       'catalog_uuid' => catalog_uuid,
       'catalog_format' => catalog_format,
       'environment'  => environment.to_s,
-      'resources' => resources,
-      'edges'     => edges.   collect { |e| e.to_data_hash },
+      'resources' => @resources.map { |v| @resource_table[v].to_data_hash },
+      'edges'     => edges.map { |e| e.to_data_hash },
       'classes'   => classes,
     }.merge(metadata_hash.empty? ?
       {} : {'metadata' => metadata_hash}).merge(recursive_metadata_hash.empty? ?
@@ -595,7 +587,7 @@ class Puppet::Resource::Catalog < Puppet::Graph::SimpleGraph
                      when "random"
                        Puppet::Graph::RandomPrioritizer.new
                      else
-                       raise Puppet::DevError, "Unknown ordering type #{Puppet[:ordering]}"
+                       raise Puppet::DevError, _("Unknown ordering type %{ordering}") % { ordering: Puppet[:ordering] }
                      end
   end
 
@@ -603,7 +595,7 @@ class Puppet::Resource::Catalog < Puppet::Graph::SimpleGraph
     transaction = Puppet::Transaction.new(self, options[:report], prioritizer)
     transaction.tags = options[:tags] if options[:tags]
     transaction.ignoreschedules = true if options[:ignoreschedules]
-    transaction.for_network_device = options[:network_device]
+    transaction.for_network_device = Puppet.lookup(:network_device) { nil } || options[:network_device]
 
     transaction
   end
@@ -614,12 +606,12 @@ class Puppet::Resource::Catalog < Puppet::Graph::SimpleGraph
     return unless existing_resource = @resource_table[title_key]
 
     # If we've gotten this far, it's a real conflict
-    msg = "Duplicate declaration: #{resource.ref} is already declared"
-
-    msg << " in file #{existing_resource.file}:#{existing_resource.line}" if existing_resource.file and existing_resource.line
-
-    msg << "; cannot redeclare"
-
+    error_location_str = Puppet::Util::Errors.error_location(existing_resource.file, existing_resource.line)
+    msg = if error_location_str.empty?
+            _("Duplicate declaration: %{resource} is already declared; cannot redeclare") % { resource: resource.ref }
+          else
+            _("Duplicate declaration: %{resource} is already declared at %{error_location}; cannot redeclare") % { resource: resource.ref, error_location: error_location_str }
+          end
     raise DuplicateResourceError.new(msg, resource.file, resource.line)
   end
 
@@ -666,11 +658,11 @@ class Puppet::Resource::Catalog < Puppet::Graph::SimpleGraph
       next if block_given? and yield edge.target
 
       unless source = map[edge.source.ref]
-        raise Puppet::DevError, "Could not find resource #{edge.source.ref} when converting #{message} resources"
+        raise Puppet::DevError, _("Could not find resource %{resource} when converting %{message} resources") % { resource: edge.source.ref, message: message }
       end
 
       unless target = map[edge.target.ref]
-        raise Puppet::DevError, "Could not find resource #{edge.target.ref} when converting #{message} resources"
+        raise Puppet::DevError, _("Could not find resource %{resource} when converting %{message} resources") % { resource: edge.target.ref, message: message }
       end
 
       result.add_edge(source, target, edge.label)
@@ -679,7 +671,7 @@ class Puppet::Resource::Catalog < Puppet::Graph::SimpleGraph
     map.clear
 
     result.add_class(*self.classes)
-    result.tag(*self.tags)
+    result.merge_tags_from(self)
 
     result
   end

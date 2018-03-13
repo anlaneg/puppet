@@ -66,12 +66,23 @@ describe Puppet::Agent do
   it "should initialize the client's transaction_uuid if passed as a client_option" do
     client = mock 'client'
     transaction_uuid = 'foo'
-    AgentTestClient.expects(:new).with(anything, transaction_uuid).returns client
+    AgentTestClient.expects(:new).with(transaction_uuid, nil).returns client
 
     client.expects(:run)
 
     @agent.stubs(:disabled?).returns false
     @agent.run(:transaction_uuid => transaction_uuid)
+  end
+
+  it "should initialize the client's job_id if passed as a client_option" do
+    client = mock 'client'
+    job_id = '289'
+    AgentTestClient.expects(:new).with(anything, job_id).returns client
+
+    client.expects(:run)
+
+    @agent.stubs(:disabled?).returns false
+    @agent.run(:job_id => job_id)
   end
 
   it "should be considered running if the lock file is locked" do
@@ -206,6 +217,17 @@ describe Puppet::Agent do
         @agent.run
       end
 
+      it 'should exit with 1 if an exception is raised' do
+        client = AgentTestClient.new
+        AgentTestClient.expects(:new).returns client
+
+        client.expects(:run).raises(StandardError)
+
+        Kernel.expects(:fork).yields
+        @agent.expects(:exit).with(1)
+        @agent.run
+      end
+
       it "should re-raise exit happening in the child" do
         Process.stubs(:waitpid2).returns [123, (stub 'process::status', :exitstatus => -1)]
         expect { @agent.run }.to raise_error(SystemExit)
@@ -234,6 +256,39 @@ describe Puppet::Agent do
       it "should never fork" do
         agent = Puppet::Agent.new(AgentTestClient, true)
         expect(agent.should_fork).to be_falsey
+      end
+    end
+
+    describe 'when runtimeout is set' do
+      before(:each) do
+        Puppet[:runtimeout] = 1
+      end
+
+      it 'times out when a run exceeds the set limit' do
+        client = AgentTestClient.new
+        client.instance_eval do
+          # Stub methods used to set test expectations.
+          def processing; end
+          def handling; end
+
+          def run(client_options = {})
+            # Simulate a hanging agent operation that also traps errors.
+            begin
+              ::Kernel.sleep(5)
+              processing()
+            rescue
+              handling()
+            end
+          end
+        end
+
+        AgentTestClient.expects(:new).returns client
+
+        client.expects(:processing).never
+        client.expects(:handling).never
+        Puppet.expects(:log_exception).with(instance_of(Puppet::Agent::RunTimeoutError), anything)
+
+        expect(@agent.run).to eq(1)
       end
     end
   end

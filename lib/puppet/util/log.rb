@@ -63,7 +63,8 @@ class Puppet::Util::Log
     destinations.keys.each { |dest|
       close(dest)
     }
-    raise Puppet::DevError.new("Log.close_all failed to close #{@destinations.keys.inspect}") if !@destinations.empty?
+    #TRANSLATORS "Log.close_all" is a method name and should not be translated
+    raise Puppet::DevError.new(_("Log.close_all failed to close %{destinations}") % { destinations: @destinations.keys.inspect }) if !@destinations.empty?
   end
 
   # Flush any log destinations that support such operations.
@@ -82,8 +83,8 @@ class Puppet::Util::Log
   # Create a new log message.  The primary role of this method is to
   # avoid creating log messages below the loglevel.
   def Log.create(hash)
-    raise Puppet::DevError, "Logs require a level" unless hash.include?(:level)
-    raise Puppet::DevError, "Invalid log level #{hash[:level]}" unless @levels.index(hash[:level])
+    raise Puppet::DevError, _("Logs require a level") unless hash.include?(:level)
+    raise Puppet::DevError, _("Invalid log level %{level}") % { level: hash[:level] } unless @levels.index(hash[:level])
     @levels.index(hash[:level]) >= @loglevel ? Puppet::Util::Log.new(hash) : nil
   end
 
@@ -105,7 +106,7 @@ class Puppet::Util::Log
   def Log.level=(level)
     level = level.intern unless level.is_a?(Symbol)
 
-    raise Puppet::DevError, "Invalid loglevel #{level}" unless @levels.include?(level)
+    raise Puppet::DevError, _("Invalid loglevel %{level}") % { level: level } unless @levels.include?(level)
 
     @loglevel = @levels.index(level)
 
@@ -124,7 +125,7 @@ class Puppet::Util::Log
       return
     end
 
-    name, type = @desttypes.find do |name, klass|
+    _, type = @desttypes.find do |name, klass|
       klass.match?(dest)
     end
 
@@ -132,7 +133,7 @@ class Puppet::Util::Log
       return
     end
 
-    raise Puppet::DevError, "Unknown destination type #{dest}" unless type
+    raise Puppet::DevError, _("Unknown destination type %{dest}") % { dest: dest} unless type
 
     begin
       if type.instance_method(:initialize).arity == 1
@@ -163,12 +164,26 @@ class Puppet::Util::Log
     end
   end
 
+  def Log.coerce_string(str)
+    return Puppet::Util::CharacterEncoding.convert_to_utf_8(str) if str.valid_encoding?
+
+    # We only select the last 10 callers in the stack to avoid being spammy
+    message = _("Received a Log attribute with invalid encoding:%{log_message}") %
+        { log_message: Puppet::Util::CharacterEncoding.convert_to_utf_8(str.dump)}
+    message += '\n' + _("Backtrace:\n%{backtrace}") % { backtrace: caller[0..10].join("\n") }
+    message
+  end
+  private_class_method :coerce_string
+
   # Route the actual message. FIXME There are lots of things this method
   # should do, like caching and a bit more.  It's worth noting that there's
   # a potential for a loop here, if the machine somehow gets the destination set as
   # itself.
   def Log.newmessage(msg)
     return if @levels.index(msg.level) < @loglevel
+
+    msg.message = coerce_string(msg.message)
+    msg.source = coerce_string(msg.source)
 
     queuemessage(msg) if @destinations.length == 0
 
@@ -315,7 +330,7 @@ class Puppet::Util::Log
 
   def to_data_hash
     {
-      'level' => @level,
+      'level' => @level.to_s,
       'message' => to_s,
       'source' => @source,
       'tags' => @tags.to_a,
@@ -341,15 +356,18 @@ class Puppet::Util::Log
   end
 
   def message=(msg)
-    raise ArgumentError, "Puppet::Util::Log requires a message" unless msg
+    #TRANSLATORS 'Puppet::Util::Log' refers to a Puppet source code class
+    raise ArgumentError, _("Puppet::Util::Log requires a message") unless msg
     @message = msg.to_s
   end
 
   def level=(level)
-    raise ArgumentError, "Puppet::Util::Log requires a log level" unless level
-    raise ArgumentError, "Puppet::Util::Log requires a symbol or string" unless level.respond_to? "to_sym"
+    #TRANSLATORS 'Puppet::Util::Log' refers to a Puppet source code class
+    raise ArgumentError, _("Puppet::Util::Log requires a log level") unless level
+    #TRANSLATORS 'Puppet::Util::Log' refers to a Puppet source code class
+    raise ArgumentError, _("Puppet::Util::Log requires a symbol or string") unless level.respond_to? "to_sym"
     @level = level.to_sym
-    raise ArgumentError, "Invalid log level #{@level}" unless self.class.validlevel?(@level)
+    raise ArgumentError, _("Invalid log level %{level}") % { level: @level } unless self.class.validlevel?(@level)
 
     # Tag myself with my log level
     tag(level)
@@ -360,7 +378,7 @@ class Puppet::Util::Log
   def source=(source)
     if defined?(Puppet::Type) && source.is_a?(Puppet::Type)
       @source = source.path
-      source.tags.each { |t| tag(t) }
+      merge_tags_from(source)
       self.file = source.file
       self.line = source.line
     else
@@ -378,18 +396,8 @@ class Puppet::Util::Log
     # Issue based messages do not have details in the message. It
     # must be appended here
     unless issue_code.nil?
-      msg = _("Could not parse for environment %{env}: %{msg}") % { env: environment, msg: msg } unless environment.nil?
-      if file && line && pos
-        msg = _("%{msg} at %{file}:%{line}:%{pos}") % { msg: msg, file: file, line: line, pos: pos }
-      elsif file and line
-        msg = _("%{msg}  at %{file}:%{line}") % { msg: msg, file: file, line: line }
-      elsif line && pos
-        msg = _("%{msg}  at line %{line}:%{pos}") % { msg: msg, line: line, pos: pos }
-      elsif line
-        msg = _("%{msg}  at line %{line}") % { msg: msg, line: line }
-      elsif file
-        msg = _("%{msg}  in %{file}") % { msg: msg, file: file }
-      end
+      msg = _("Could not parse for environment %{environment}: %{msg}") % { environment: environment, msg: msg } unless environment.nil?
+      msg += Puppet::Util::Errors.error_location_with_space(file, line, pos)
       msg = _("%{msg} on node %{node}") % { msg: msg, node: node } unless node.nil?
       if @backtrace.is_a?(Array)
         msg += "\n"
@@ -401,7 +409,7 @@ class Puppet::Util::Log
 
 end
 
-# This is for backward compatibility from when we changed the constant to Puppet::Util::Log
-# because the reports include the constant name.  Apparently the alias was created in
-# March 2007, should could probably be removed soon.
+# This is for backward compatibility from when we changed the constant to
+# Puppet::Util::Log because the reports include the constant name. It was
+# considered for removal but left in due to risk of breakage (PUP-7502).
 Puppet::Log = Puppet::Util::Log

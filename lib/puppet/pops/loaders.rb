@@ -15,7 +15,6 @@ class Loaders
   attr_reader :puppet_system_loader
   attr_reader :public_environment_loader
   attr_reader :private_environment_loader
-  attr_reader :implementation_registry
   attr_reader :environment
 
   def self.new(environment, for_agent = false)
@@ -55,18 +54,26 @@ class Loaders
       create_environment_loader(environment)
     end
 
-    # 3. The implementation registry maintains mappings between Puppet types and Runtime types for
-    #    the current environment
-    @implementation_registry = Types::ImplementationRegistry.new(@private_environment_loader)
-    Pcore.init(@puppet_system_loader, @implementation_registry, for_agent)
+    Pcore.init_env(@private_environment_loader)
 
-    # 4. module loaders are set up from the create_environment_loader, they register themselves
+    # 3. module loaders are set up from the create_environment_loader, they register themselves
+  end
+
+  # Called after loader has been added to Puppet Context as :loaders so that dynamic types can
+  # be pre-loaded with a fully configured loader system
+  def pre_load
+    @puppet_system_loader.load(:type, 'error')
+
+    # Will move to Bolt
+    @puppet_system_loader.load(:type, 'executionresult')
   end
 
   # Clears the cached static and puppet_system loaders (to enable testing)
   #
   def self.clear
     @@static_loader = nil
+    Model.class_variable_set(:@@pcore_ast_initialized, false)
+    Model.register_pcore_types
   end
 
   # Calls {#loaders} to obtain the {{Loaders}} instance and then uses it to find the appropriate loader
@@ -80,9 +87,23 @@ class Loaders
     loaders.find_loader(module_name)
   end
 
+  def self.static_implementation_registry
+    if !class_variable_defined?(:@@static_implementation_registry) || @@static_implementation_registry.nil?
+      ir = Types::ImplementationRegistry.new
+      Types::TypeParser.type_map.values.each { |t| ir.register_implementation(t.simple_name, t.class.name) }
+      @@static_implementation_registry = ir
+    end
+    @@static_implementation_registry
+  end
+
   def self.static_loader
     # The static loader can only be changed after a reboot
-    @@static_loader ||= Loader::StaticLoader.new()
+    if !class_variable_defined?(:@@static_loader) || @@static_loader.nil?
+      @@static_loader = Loader::StaticLoader.new()
+      @@static_loader.register_aliases
+      Pcore.init(@@static_loader, static_implementation_registry)
+    end
+    @@static_loader
   end
 
   def self.implementation_registry
@@ -91,7 +112,7 @@ class Loaders
   end
 
   def register_implementations(obj_classes, name_authority)
-    self.class.register_implementations_with_loader(obj_classes, name_authority, loader = @private_environment_loader)
+    self.class.register_implementations_with_loader(obj_classes, name_authority, @private_environment_loader)
   end
 
   # Register implementations using the global static loader
@@ -102,14 +123,13 @@ class Loaders
   def self.register_implementations_with_loader(obj_classes, name_authority, loader)
     types = obj_classes.map do |obj_class|
       type = obj_class._pcore_type
-      typed_name = Loader::TypedName.new(:type, type.name.downcase, name_authority)
+      typed_name = Loader::TypedName.new(:type, type.name, name_authority)
       entry = loader.loaded_entry(typed_name)
       loader.set_entry(typed_name, type) if entry.nil? || entry.value.nil?
       type
     end
     # Resolve lazy so that all types can cross reference each other
-    parser = Types::TypeParser.singleton
-    types.each { |type| type.resolve(parser, loader) }
+    types.each { |type| type.resolve(loader) }
   end
 
   # Register the given type with the Runtime3TypeLoader. The registration will not happen unless
@@ -127,7 +147,7 @@ class Loaders
 
     name = name.to_s
     caps_name = Types::TypeFormatter.singleton.capitalize_segments(name)
-    typed_name = Loader::TypedName.new(:type, name.downcase)
+    typed_name = Loader::TypedName.new(:type, name)
     rt3_loader.set_entry(typed_name, Types::PResourceType.new(caps_name), origin)
     nil
   end
@@ -151,7 +171,7 @@ class Loaders
   # @api private
   def self.loaders
     loaders = Puppet.lookup(:loaders) { nil }
-    raise Puppet::ParseError, "Internal Error: Puppet Context ':loaders' missing" if loaders.nil?
+    raise Puppet::ParseError, _("Internal Error: Puppet Context ':loaders' missing") if loaders.nil?
     loaders
   end
 
@@ -178,22 +198,23 @@ class Loaders
   # @raise [Puppet::ParseError] if no loader can be found
   # @api private
   def find_loader(module_name)
-    if module_name.nil? || module_name == ''
-      # TODO : Later when fdefinition can be private, a decision is needed regarding what that means.
-      #        A private environment loader could be used for logic outside of modules, then only that logic
-      #        would see the definition.
-      #
-      # Use the private loader, this definition may see the environment's dependencies (currently, all modules)
-      loader = private_environment_loader()
-      raise Puppet::ParseError, 'Internal Error: did not find public loader' if loader.nil?
-      loader
+    if module_name.nil? || EMPTY_STRING == module_name
+      # Use the public environment loader
+      public_environment_loader
     else
       # TODO : Later check if definition is private, and then add it to private_loader_for_module
       #
       loader = public_loader_for_module(module_name)
-      raise Puppet::ParseError, "Internal Error: did not find public loader for module: '#{module_name}'" if loader.nil?
+      if loader.nil?
+        raise Puppet::ParseError, _("Internal Error: did not find public loader for module: '%{module_name}'") % { module_name: module_name }
+      end
       loader
     end
+  end
+
+  def implementation_registry
+    # Environment specific implementation registry
+    @implementation_registry ||= Types::ImplementationRegistry.new(self.class.static_implementation_registry)
   end
 
   def static_loader
@@ -230,11 +251,106 @@ class Loaders
 
   def add_loader_by_name(loader)
     name = loader.loader_name
-    raise Puppet::ParseError, "Internal Error: Attempt to redefine loader named '#{name}'" if @loaders_by_name.include?(name)
+    if @loaders_by_name.include?(name)
+      raise Puppet::ParseError, _("Internal Error: Attempt to redefine loader named '%{name}'") % { name: name }
+    end
     @loaders_by_name[name] = loader
   end
 
+  # Load the main manifest for the given environment
+  #
+  # There are two sources that can be used for the initial parse:
+  #
+  #   1. The value of `Puppet[:code]`: Puppet can take a string from
+  #     its settings and parse that as a manifest. This is used by various
+  #     Puppet applications to read in a manifest and pass it to the
+  #     environment as a side effect. This is attempted first.
+  #   2. The contents of the environment's +manifest+ attribute: Puppet will
+  #     try to load the environment manifest. The manifest must be a file.
+  #
+  # @return [Model::Program] The manifest parsed into a model object
+  def load_main_manifest
+    parser = Parser::EvaluatingParser.singleton
+    parsed_code = Puppet[:code]
+    program = if parsed_code != ""
+      parser.parse_string(parsed_code, 'unknown-source-location')
+    else
+      file = @environment.manifest
+
+      # if the manifest file is a reference to a directory, parse and combine
+      # all .pp files in that directory
+      if file == Puppet::Node::Environment::NO_MANIFEST
+        nil
+      elsif File.directory?(file)
+        raise Puppet::Error, "manifest of environment '#{@environment.name}' appoints directory '#{file}'. It must be a file"
+      elsif File.exists?(file)
+        parser.parse_file(file)
+      else
+        raise Puppet::Error, "manifest of environment '#{@environment.name}' appoints '#{file}'. It does not exist"
+      end
+    end
+    instantiate_definitions(program, public_environment_loader) unless program.nil?
+    program
+  rescue Puppet::ParseErrorWithIssue => detail
+    detail.environment = @environment.name
+    raise
+  rescue => detail
+    msg = _('Could not parse for environment %{env}: %{detail}') % { env: @environment, detail: detail }
+    error = Puppet::Error.new(msg)
+    error.set_backtrace(detail.backtrace)
+    raise error
+  end
+
+  # Add 4.x definitions found in the given program to the given loader.
+  def instantiate_definitions(program, loader)
+    program.definitions.each { |d| instantiate_definition(d, loader) }
+    nil
+  end
+
+  # Add given 4.x definition to the given loader.
+  def instantiate_definition(definition, loader)
+    case definition
+    when Model::PlanDefinition
+      instantiate_PlanDefinition(definition, loader)
+    when Model::FunctionDefinition
+      instantiate_FunctionDefinition(definition, loader)
+    when Model::TypeAlias
+      instantiate_TypeAlias(definition, loader)
+    when Model::TypeMapping
+      instantiate_TypeMapping(definition, loader)
+    else
+      raise Puppet::ParseError, "Internal Error: Unknown type of definition - got '#{definition.class}'"
+    end
+  end
+
   private
+
+  def instantiate_PlanDefinition(plan_definition, loader)
+    typed_name, f = Loader::PuppetPlanInstantiator.create_from_model(plan_definition, loader)
+    loader.set_entry(typed_name, f, plan_definition.locator.to_uri(plan_definition))
+    nil
+  end
+
+  def instantiate_FunctionDefinition(function_definition, loader)
+    # Instantiate Function, and store it in the loader
+    typed_name, f = Loader::PuppetFunctionInstantiator.create_from_model(function_definition, loader)
+    loader.set_entry(typed_name, f, function_definition.locator.to_uri(function_definition))
+    nil
+  end
+
+  def instantiate_TypeAlias(type_alias, loader)
+    # Bind the type alias to the loader using the alias
+    Puppet::Pops::Loader::TypeDefinitionInstantiator.create_from_model(type_alias, loader)
+    nil
+  end
+
+  def instantiate_TypeMapping(type_mapping, loader)
+    tf = Types::TypeParser.singleton
+    lhs = tf.interpret(type_mapping.type_expr, loader)
+    rhs = tf.interpret_any(type_mapping.mapping_expr, loader)
+    implementation_registry.register_type_mapping(lhs, rhs)
+    nil
+  end
 
   def create_puppet_system_loader()
     Loader::ModuleLoaders.system_loader_from(static_loader, self)
@@ -256,21 +372,24 @@ class Loaders
     # available modules. (3x is everyone sees everything).
     # Puppet binder currently reads confdir/bindings - that is bad, it should be using the new environment support.
 
-    # The environment is not a namespace, so give it a nil "module_name"
-    loader_name = "environment:#{environment.name}"
     # env_conf is setup from the environment_dir value passed into Puppet::Environments::Directories.new
     env_conf = Puppet.lookup(:environments).get_conf(environment.name)
     env_path = env_conf.nil? || !env_conf.is_a?(Puppet::Settings::EnvironmentConf) ? nil : env_conf.path_to_env
 
-    # Create the 3.x resource type loader
-    @runtime3_type_loader = add_loader_by_name(Loader::Runtime3TypeLoader.new(puppet_system_loader, self, environment, env_conf.nil? ? nil : env_path))
-
-    if env_path.nil?
-      # Not a real directory environment, cannot work as a module TODO: Drop when legacy env are dropped?
-      loader = add_loader_by_name(Loader::SimpleEnvironmentLoader.new(@runtime3_type_loader, loader_name))
+    if Puppet[:tasks]
+      loader = Loader::ModuleLoaders.environment_loader_from(puppet_system_loader, self, env_path)
     else
-      # View the environment as a module to allow loading from it - this module is always called 'environment'
-      loader = Loader::ModuleLoaders.environment_loader_from(@runtime3_type_loader, self, env_path)
+      # Create the 3.x resource type loader
+      static_loader.runtime_3_init
+      @runtime3_type_loader = add_loader_by_name(Loader::Runtime3TypeLoader.new(puppet_system_loader, self, environment, env_conf.nil? ? nil : env_path))
+
+      if env_path.nil?
+        # Not a real directory environment, cannot work as a module TODO: Drop when legacy env are dropped?
+        loader = add_loader_by_name(Loader::SimpleEnvironmentLoader.new(@runtime3_type_loader, Loader::ENVIRONMENT))
+      else
+        # View the environment as a module to allow loading from it - this module is always called 'environment'
+        loader = Loader::ModuleLoaders.environment_loader_from(@runtime3_type_loader, self, env_path)
+      end
     end
 
     # An environment has a module path even if it has a null loader
@@ -281,7 +400,7 @@ class Loaders
     # Code in the environment gets to see all modules (since there is no metadata for the environment)
     # but since this is not given to the module loaders, they can not load global code (since they can not
     # have prior knowledge about this
-    loader = add_loader_by_name(Loader::DependencyLoader.new(loader, 'environment private', @module_resolver.all_module_loaders()))
+    loader = add_loader_by_name(Loader::DependencyLoader.new(loader, Loader::ENVIRONMENT_PRIVATE, @module_resolver.all_module_loaders()))
 
     # The module loader gets the private loader via a lazy operation to look up the module's private loader.
     # This does not work for an environment since it is not resolved the same way.
@@ -386,7 +505,7 @@ class Loaders
         nil
       else
         module_data.private_loader =
-          if module_data.restrict_to_dependencies?
+          if module_data.restrict_to_dependencies? && !Puppet[:tasks]
             create_loader_with_only_dependencies_visible(module_data)
           else
             create_loader_with_all_modules_visible(module_data)

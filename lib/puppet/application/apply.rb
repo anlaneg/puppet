@@ -31,10 +31,14 @@ class Puppet::Application::Apply < Puppet::Application
     exit 1
   end
 
-  def help
-    <<-'HELP'
+  def summary
+    _("Apply Puppet manifests locally")
+  end
 
-puppet-apply(8) -- Apply Puppet manifests locally
+  def help
+    <<-HELP
+
+puppet-apply(8) -- #{summary}
 ========
 
 SYNOPSIS
@@ -46,7 +50,7 @@ USAGE
 -----
 puppet apply [-h|--help] [-V|--version] [-d|--debug] [-v|--verbose]
   [-e|--execute] [--detailed-exitcodes] [-L|--loadclasses]
-  [-l|--logdest syslog|eventlog|<FILE>|console] [--noop]
+  [-l|--logdest syslog|eventlog|<ABS FILEPATH>|console] [--noop]
   [--catalog <catalog>] [--write-catalog-summary] <file>
 
 
@@ -152,7 +156,7 @@ Luke Kanies
 
 COPYRIGHT
 ---------
-Copyright (c) 2011 Puppet Labs, LLC Licensed under the Apache 2.0 License
+Copyright (c) 2011 Puppet Inc., LLC Licensed under the Apache 2.0 License
 
     HELP
   end
@@ -241,7 +245,7 @@ Copyright (c) 2011 Puppet Labs, LLC Licensed under the Apache 2.0 License
             $stderr.puts _("%{file} is not readable") % { file: file }
             exit(63)
           end
-          node.classes = Puppet::FileSystem.read(file, :encoding => 'utf-8').split(/[\s\n]+/)
+          node.classes = Puppet::FileSystem.read(file, :encoding => 'utf-8').split(/[\s]+/)
         end
       end
 
@@ -318,9 +322,7 @@ Copyright (c) 2011 Puppet Labs, LLC Licensed under the Apache 2.0 License
     Puppet.settings.use :main, :agent, :ssl
 
 
-    if Puppet[:noop]
-      Puppet::Resource::Catalog.indirection.cache_class = nil
-    elsif Puppet[:catalog_cache_terminus]
+    if Puppet[:catalog_cache_terminus]
       Puppet::Resource::Catalog.indirection.cache_class = Puppet[:catalog_cache_terminus]
     end
 

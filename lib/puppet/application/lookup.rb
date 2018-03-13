@@ -61,15 +61,8 @@ class Puppet::Application::Lookup < Puppet::Application
     end
   end
 
-  # Sets up the 'node_cache_terminus' default to use the Write Only Yaml terminus :write_only_yaml.
-  # If this is not wanted, the setting ´node_cache_terminus´ should be set to nil.
-  # @see Puppet::Node::WriteOnlyYaml
-  # @see #setup_node_cache
-  # @see puppet issue 16753
-  #
   def app_defaults
     super.merge({
-      :node_cache_terminus => :write_only_yaml,
       :facts_terminus => 'yaml'
     })
   end
@@ -102,10 +95,14 @@ class Puppet::Application::Lookup < Puppet::Application
     setup_terminuses
   end
 
-  def help
-    <<-'HELP'
+  def summary
+    _("Interactive Hiera lookup")
+  end
 
-puppet-lookup(8) -- Interactive Hiera lookup
+  def help
+    <<-HELP
+
+puppet-lookup(8) -- #{summary}
 ========
 
 SYNOPSIS
@@ -252,7 +249,7 @@ EXAMPLE
 
 COPYRIGHT
 ---------
-Copyright (c) 2015 Puppet Labs, LLC Licensed under the Apache 2.0 License
+Copyright (c) 2015 Puppet Inc., LLC Licensed under the Apache 2.0 License
 
 
     HELP
@@ -265,7 +262,7 @@ Copyright (c) 2015 Puppet Labs, LLC Licensed under the Apache 2.0 License
     #  raise "No node was given via the '--node' flag for the scope of the lookup.\n#{RUN_HELP}"
     #end
 
-    if (options[:sort_merge_arrays] || options[:merge_hash_arrays] || options[:prefix]) && options[:merge] != 'deep'
+    if (options[:sort_merged_arrays] || options[:merge_hash_arrays] || options[:prefix]) && options[:merge] != 'deep'
       raise _("The options %{deep_merge_opts} are only available with '--merge deep'\n%{run_help}") % { deep_merge_opts: DEEP_MERGE_OPTIONS, run_help: RUN_HELP }
     end
 
@@ -282,7 +279,7 @@ Copyright (c) 2015 Puppet Labs, LLC Licensed under the Apache 2.0 License
 
       if merge == 'deep'
         merge_options = {'strategy' => 'deep',
-          'sort_merge_arrays' => !options[:sort_merge_arrays].nil?,
+          'sort_merged_arrays' => !options[:sort_merged_arrays].nil?,
           'merge_hash_arrays' => !options[:merge_hash_arrays].nil?}
 
         if options[:prefix]
@@ -309,9 +306,8 @@ Copyright (c) 2015 Puppet Labs, LLC Licensed under the Apache 2.0 License
 
     # Format defaults to text (:s) when producing an explanation and :yaml when producing the value
     format = options[:render_as] || (explain ? :s : :yaml)
-    renderer = Puppet::Network::FormatHandler.format(format == :json ? :pson : format)
+    renderer = Puppet::Network::FormatHandler.format(format)
     raise _("Unknown rendering format '%{format}'") % { format: format } if renderer.nil?
-
 
     generate_scope do |scope|
       lookup_invocation = Puppet::Pops::Lookup::Invocation.new(scope, {}, {}, explain ? Puppet::Pops::Lookup::Explainer.new(explain_options, only_explain_options) : nil)
@@ -337,15 +333,23 @@ Copyright (c) 2015 Puppet Labs, LLC Licensed under the Apache 2.0 License
       # If we want to lookup the node we are currently on
       # we must returning these settings to their default values
       Puppet.settings[:facts_terminus] = 'facter'
-      Puppet.settings[:node_cache_terminus] = nil
     end
 
-    node = Puppet::Node.indirection.find(node) unless node.is_a?(Puppet::Node) # to allow unit tests to pass a node instance
+    unless node.is_a?(Puppet::Node) # to allow unit tests to pass a node instance
+      ni = Puppet::Node.indirection
+      tc = ni.terminus_class
+      if tc == :plain || options[:compile]
+        node = ni.find(node)
+      else
+        ni.terminus_class = :plain
+        node = ni.find(node)
+        ni.terminus_class = tc
+      end
+    end
 
     fact_file = options[:fact_file]
 
     if fact_file
-      original_facts = node.parameters
       if fact_file.end_with?("json")
         given_facts = JSON.parse(Puppet::FileSystem.read(fact_file, :encoding => 'utf-8'))
       else
@@ -355,8 +359,7 @@ Copyright (c) 2015 Puppet Labs, LLC Licensed under the Apache 2.0 License
       unless given_facts.instance_of?(Hash)
         raise _("Incorrect formatted data in %{fact_file} given via the --facts flag") % { fact_file: fact_file }
       end
-
-      node.parameters = original_facts.merge(given_facts)
+      node.add_extra_facts(given_facts)
     end
 
     Puppet[:code] = 'undef' unless options[:compile]

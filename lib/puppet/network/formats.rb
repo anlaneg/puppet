@@ -63,7 +63,7 @@ Puppet::Network::FormatHandler.create_serialized_formats(:yaml) do
   end
 end
 
-Puppet::Network::FormatHandler.create(:s, :mime => "text/plain", :extension => "txt")
+Puppet::Network::FormatHandler.create(:s, :mime => "text/plain", :charset => Encoding::UTF_8, :extension => "txt")
 
 # By default, to_binary is called to render and from_binary called to intern. Note unlike
 # text-based formats (json, yaml, etc), we don't use to_data_hash for binary.
@@ -99,7 +99,7 @@ Puppet::Network::FormatHandler.create_serialized_formats(:pson, :weight => 10, :
   end
 end
 
-Puppet::Network::FormatHandler.create_serialized_formats(:json, :mime => 'application/json', :weight => 15, :required_methods => [:render_method, :intern_method], :intern_method => :from_data_hash) do
+Puppet::Network::FormatHandler.create_serialized_formats(:json, :mime => 'application/json', :charset => Encoding::UTF_8, :weight => 15, :required_methods => [:render_method, :intern_method], :intern_method => :from_data_hash) do
   def intern(klass, text)
     data_to_instance(klass, JSON.parse(text))
   end
@@ -132,16 +132,14 @@ Puppet::Network::FormatHandler.create(:console,
                                       :mime   => 'text/x-console-text',
                                       :weight => 0) do
   def json
-    @json ||= Puppet::Network::FormatHandler.format(:pson)
+    @json ||= Puppet::Network::FormatHandler.format(:json)
   end
 
   def render(datum)
-    # String to String
-    return datum if datum.is_a? String
-    return datum if datum.is_a? Numeric
+    return datum if datum.is_a?(String) || datum.is_a?(Numeric)
 
     # Simple hash to table
-    if datum.is_a? Hash and datum.keys.all? { |x| x.is_a? String or x.is_a? Numeric }
+    if datum.is_a?(Hash) && datum.keys.all? { |x| x.is_a?(String) || x.is_a?(Numeric) }
       output = ''
       column_a = datum.empty? ? 2 : datum.map{ |k,v| k.to_s.length }.max + 2
       datum.sort_by { |k,v| k.to_s } .each do |key, value|
@@ -164,7 +162,7 @@ Puppet::Network::FormatHandler.create(:console,
     end
 
     # ...or pretty-print the inspect outcome.
-    return PSON.pretty_generate(datum)
+    JSON.pretty_generate(datum, :quirks_mode => true)
   end
 
   def render_multiple(data)

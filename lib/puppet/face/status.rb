@@ -1,7 +1,7 @@
 require 'puppet/indirector/face'
 
 Puppet::Indirector::Face.define(:status, '0.0.1') do
-  copyright "Puppet Labs", 2011
+  copyright "Puppet Inc.", 2011
   license   _("Apache 2 license; see COPYING")
 
   summary _("View puppet server status.")
@@ -13,6 +13,7 @@ Puppet::Indirector::Face.define(:status, '0.0.1') do
   find = get_action(:find)
   find.default = true
   find.summary _("Check status of puppet master server.")
+  #TRANSLATORS the string 'Puppet::Status' is a Puppet language object and should not be translated
   find.returns _(<<-'EOT')
     A "true" response or a low-level connection error. When used from the Ruby
     API: returns a Puppet::Status object.

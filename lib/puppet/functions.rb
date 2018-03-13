@@ -186,8 +186,12 @@ module Puppet::Functions
     # and it will fail unless protected with an if defined? if the local
     # variable does not exist in the block's binder.
     #
-    loader = block.binding.eval('loader_injected_arg if defined?(loader_injected_arg)')
-    create_loaded_function(func_name, loader, function_base, &block)
+    begin
+      loader = block.binding.eval('loader_injected_arg if defined?(loader_injected_arg)')
+      create_loaded_function(func_name, loader, function_base, &block)
+    rescue StandardError => e
+      raise ArgumentError, _("Function Load Error for function '%{function_name}': %{message}") % {function_name: func_name, message: e.message}
+    end
   end
 
   # Creates a function in, or in a local loader under the given loader.
@@ -301,7 +305,7 @@ module Puppet::Functions
 
     # @api private
     def self.builder
-      DispatcherBuilder.new(dispatcher, Puppet::Pops::Types::TypeParser.singleton, Puppet::Pops::Types::PCallableType::DEFAULT, loader)
+      DispatcherBuilder.new(dispatcher, Puppet::Pops::Types::PCallableType::DEFAULT, loader)
     end
 
     # Dispatch any calls that match the signature to the provided method name.
@@ -389,8 +393,7 @@ module Puppet::Functions
     attr_reader :loader
 
     # @api private
-    def initialize(dispatcher, type_parser, all_callables, loader)
-      @type_parser = type_parser
+    def initialize(dispatcher, all_callables, loader)
       @all_callables = all_callables
       @dispatcher = dispatcher
       @loader = loader
@@ -475,8 +478,8 @@ module Puppet::Functions
         type = @all_callables
         name = type_and_name[0]
       when 2
-        type_string, name = type_and_name
-        type = @type_parser.parse(type_string, loader)
+        type, name = type_and_name
+        type = Puppet::Pops::Types::TypeParser.singleton.parse(type, loader) unless type.is_a?(Puppet::Pops::Types::PAnyType)
       else
         raise ArgumentError, _("block_param accepts max 2 arguments (type, name), got %{size}.") % { size: type_and_name.size }
       end
@@ -514,7 +517,9 @@ module Puppet::Functions
     #
     # @api public
     def return_type(type)
-      raise ArgumentError, _("Argument to 'return_type' must be a String reference to a Puppet Data Type. Got %{type_class}") % { type_class: type.class } unless type.is_a?(String)
+      unless type.is_a?(String) || type.is_a?(Puppet::Pops::Types::PAnyType)
+        raise ArgumentError, _("Argument to 'return_type' must be a String reference to a Puppet Data Type. Got %{type_class}") % { type_class: type.class }
+      end
       @return_type = type
     end
 
@@ -529,7 +534,7 @@ module Puppet::Functions
         raise ArgumentError, _("Parameter name argument must be a Symbol. Got %{name_class}") % { name_class: name.class }
       end
 
-      if type.is_a?(String)
+      if type.is_a?(String) || type.is_a?(Puppet::Pops::Types::PAnyType)
         @types << type
         @names << name
         # mark what should be picked for this position when dispatching
@@ -559,7 +564,7 @@ module Puppet::Functions
       @block_name = nil
       @return_type = nil
       @argument_mismatch_hander = argument_mismatch_handler
-      self.instance_eval &block
+      self.instance_eval(&block)
       callable_t = create_callable(@types, @block_type, @return_type, @min, @max)
       @dispatcher.add(Puppet::Pops::Functions::Dispatch.new(callable_t, meth_name, @names, @max == :default, @block_name, @injections, @weaving, @argument_mismatch_hander))
     end
@@ -572,13 +577,26 @@ module Puppet::Functions
     # @api private
     def create_callable(types, block_type, return_type, from, to)
       mapped_types = types.map do |t|
-        @type_parser.parse(t, loader)
+        t.is_a?(Puppet::Pops::Types::PAnyType) ? t : internal_type_parse(t, loader)
       end
       param_types = Puppet::Pops::Types::PTupleType.new(mapped_types, from > 0 && from == to ? nil : Puppet::Pops::Types::PIntegerType.new(from, to))
-      return_type = @type_parser.parse(return_type, loader) unless return_type.nil?
+      return_type = internal_type_parse(return_type, loader) unless return_type.nil? || return_type.is_a?(Puppet::Pops::Types::PAnyType)
       Puppet::Pops::Types::PCallableType.new(param_types, block_type, return_type)
     end
+
+    def internal_type_parse(type_string, loader)
+      begin
+        Puppet::Pops::Types::TypeParser.singleton.parse(type_string, loader)
+      rescue StandardError => e
+        raise ArgumentError, _("Parsing of type string '\"%{type_string}\"' failed with message: <%{message}>.\n") % {
+            type_string: type_string,
+            message: e.message
+        }
+      end
+    end
+    private :internal_type_parse
   end
+
 
   # The LocalTypeAliasBuilder is used by the 'local_types' method to collect the individual
   # type aliases given by the function's author.
@@ -602,51 +620,48 @@ module Puppet::Functions
     # @api public
     #
     def type(assignment_string)
-      result = parser.parse_string("type #{assignment_string}", nil) # no file source :-(
+      # Get location to use in case of error - this produces ruby filename and where call to 'type' occurred
+      # but strips off the rest of the internal "where" as it is not meaningful to user.
+      #
+      rb_location = caller[0]
+
+      begin
+        result = parser.parse_string("type #{assignment_string}", nil)
+      rescue StandardError => e
+        rb_location = rb_location.gsub(/:in.*$/, '')
+        # Create a meaningful location for parse errors - show both what went wrong with the parsing
+        # and in which ruby file it was found.
+        raise ArgumentError, _("Parsing of 'type \"%{assignment_string}\"' failed with message: <%{message}>.\n" +
+          "Called from <%{ruby_file_location}>") % {
+            assignment_string: assignment_string,
+            message: e.message,
+            ruby_file_location: rb_location
+        }
+      end
       unless result.body.kind_of?(Puppet::Pops::Model::TypeAlias)
-        raise ArgumentError, _("Expected a type alias assignment on the form 'AliasType = T', got '%{assignment_string}'") % { assignment_string: assignment_string }
+        rb_location = rb_location.gsub(/:in.*$/, '')
+        raise ArgumentError, _("Expected a type alias assignment on the form 'AliasType = T', got '%{assignment_string}'.\n"+
+        "Called from <%{ruby_file_location}>") % {
+          assignment_string: assignment_string,
+          ruby_file_location: rb_location
+        }
       end
       @local_types << result.body
     end
   end
-
-  private
 
   # @note WARNING: This style of creating functions is not public. It is a system
   #   under development that will be used for creating "system" functions.
   #
   # This is a private, internal, system for creating functions. It supports
   # everything that the public function definition system supports as well as a
-  # few extra features.
-  #
-  # Injection Support
-  # ===
-  # The Function API supports injection of data and services. It is possible to
-  # make injection that takes effect when the function is loaded (for services
-  # and runtime configuration that does not change depending on how/from where
-  # in what context the function is called. It is also possible to inject and
-  # weave argument values into a call.
-  #
-  # Injection of attributes
-  # ---
-  # Injection of attributes is performed by one of the methods `attr_injected`,
-  # and `attr_injected_producer`.  The injected attributes are available via
-  # accessor method calls.
-  #
-  # @example using injected attributes
-  #   Puppet::Functions.create_function('test') do
-  #     attr_injected String, :larger, 'message_larger'
-  #     attr_injected String, :smaller, 'message_smaller'
-  #     def test(a, b)
-  #       a > b ? larger() : smaller()
-  #     end
-  #   end
+  # few extra features such as injection of well known parameters.
   #
   # @api private
   class InternalFunction < Function
     # @api private
     def self.builder
-      InternalDispatchBuilder.new(dispatcher, Puppet::Pops::Types::TypeParser.singleton, Puppet::Pops::Types::PCallableType::DEFAULT, loader)
+      InternalDispatchBuilder.new(dispatcher, Puppet::Pops::Types::PCallableType::DEFAULT, loader)
     end
 
     # Allows the implementation of a function to call other functions by name and pass the caller
@@ -659,31 +674,27 @@ module Puppet::Functions
     # @return [Object] The result returned by the called function
     #
     # @api public
-    def call_function_with_scope(scope, function_name, *args)
-      internal_call_function(scope, function_name, args)
+    def call_function_with_scope(scope, function_name, *args, &block)
+      internal_call_function(scope, function_name, args, &block)
     end
   end
 
-  # @note WARNING: This style of creating functions is not public. It is a system
-  #   under development that will be used for creating "system" functions.
-  #
   # Injection and Weaving of parameters
   # ---
-  # It is possible to inject and weave parameters into a call. These extra
-  # parameters are not part of the parameters passed from the Puppet logic, and
-  # they can not be overridden by parameters given as arguments in the call.
-  # They are invisible to the Puppet Language.
+  # It is possible to inject and weave a set of well known parameters into a call.
+  # These extra parameters are not part of the parameters passed from the Puppet
+  # logic, and  they can not be overridden by parameters given as arguments in the
+  # call. They are invisible to the Puppet Language.
   #
   # @example using injected parameters
   #   Puppet::Functions.create_function('test') do
   #     dispatch :test do
   #       param 'Scalar', 'a'
   #       param 'Scalar', 'b'
-  #       injected_param 'String', 'larger', 'message_larger'
-  #       injected_param 'String', 'smaller', 'message_smaller'
+  #       scope_param
   #     end
-  #     def test(a, b, larger, smaller)
-  #       a > b ? larger : smaller
+  #     def test(a, b, scope)
+  #       a > b ? scope['a'] : scope['b']
   #     end
   #   end
   #
@@ -691,54 +702,22 @@ module Puppet::Functions
   #
   #     test(10, 20)
   #
-  # Using injected value as default
-  # ---
-  # Default value assignment is handled by using the regular Ruby mechanism (a
-  # value is assigned to the variable).  The dispatch simply indicates that the
-  # value is optional. If the default value should be injected, it can be
-  # handled different ways depending on what is desired:
-  #
-  # * by calling the accessor method for an injected Function class attribute.
-  #   This is suitable if the value is constant across all instantiations of the
-  #   function, and across all calls.
-  # * by injecting a parameter into the call
-  #   to the left of the parameter, and then assigning that as the default value.
-  # * One of the above forms, but using an injected producer instead of a
-  #   directly injected value.
-  #
-  # @example method with injected default values
-  #   Puppet::Functions.create_function('test') do
-  #     dispatch :test do
-  #       injected_param String, 'b_default', 'b_default_value_key'
-  #       param 'Scalar', 'a'
-  #       param 'Scalar', 'b'
-  #     end
-  #     def test(b_default, a, b = b_default)
-  #       # ...
-  #     end
-  #   end
-  #
   # @api private
   class InternalDispatchBuilder < DispatcherBuilder
-    def scope_param()
-      @injections << [:scope, 'scope', '', :dispatcher_internal]
-      # mark what should be picked for this position when dispatching
-      @weaving << [@injections.size()-1]
-    end
-    # TODO: is param name really needed? Perhaps for error messages? (it is unused now)
-    #
-    # @api private
-    def injected_param(type, name, injection_name = '')
-      @injections << [type, name, injection_name]
-      # mark what should be picked for this position when dispatching
-      @weaving << [@injections.size() -1]
+    # Inject parameter for `Puppet::Parser::Scope`
+    def scope_param
+      inject(:scope)
     end
 
-    # TODO: is param name really needed? Perhaps for error messages? (it is unused now)
-    #
-    # @api private
-    def injected_producer_param(type, name, injection_name = '')
-      @injections << [type, name, injection_name, :producer]
+    # Inject parameter for `Puppet::Pal::ScriptCompiler`
+    def script_compiler_param
+      inject(:pal_script_compiler)
+    end
+
+    private
+
+    def inject(injection_name)
+      @injections << injection_name
       # mark what should be picked for this position when dispatching
       @weaving << [@injections.size()-1]
     end

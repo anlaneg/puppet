@@ -57,6 +57,17 @@ describe 'when pcore described resources types are in use' do
               end
             end;end
             EOF
+            'test3.rb' => <<-RUBY,
+              Puppet::Type.newtype(:test3) do
+                newproperty(:message)
+                newparam(:a) { isnamevar }
+                newparam(:b) { isnamevar }
+                newparam(:c) { isnamevar }
+                def self.title_patterns
+                  [ [ /^((.+)\\/(.*))$/,  [[:a], [:b], [:c]]] ]
+                end
+              end
+            RUBY
             'cap.rb' => <<-EOF
             module Puppet
             Type.newtype(:cap, :is_capability => true) do
@@ -112,12 +123,16 @@ describe 'when pcore described resources types are in use' do
         test2 { 'b':
           message => 'b works'
         }
+        test3 { 'x/y':
+          message => 'x/y works'
+        }
         cap { 'c':
           message => 'c works'
         }
       MANIFEST
       expect(catalog.resource(:test1, "a")['message']).to eq('a works')
       expect(catalog.resource(:test2, "b")['message']).to eq('b works')
+      expect(catalog.resource(:test3, "x/y")['message']).to eq('x/y works')
       expect(catalog.resource(:cap, "c")['message']).to eq('c works')
     end
 
@@ -204,7 +219,7 @@ describe 'when pcore described resources types are in use' do
       generate_and_in_a_compilers_context do |compiler|
         t1 = find_resource_type(compiler.topscope, 'test1')
         expect(t1.title_patterns.size).to be(1)
-        expect(t1.title_patterns[0][0]).to eql(/(.*)/m)
+        expect(t1.title_patterns[0][0]).to eql(/(?m-ix:(.*))/)
       end
     end
 
@@ -212,7 +227,7 @@ describe 'when pcore described resources types are in use' do
       pending "assertion of parameter types not yet implemented"
       genface.types
       expect {
-      catalog = compile_to_catalog(<<-MANIFEST)
+      compile_to_catalog(<<-MANIFEST)
         test2 { 'b':
           color => 'white is not a color'
         }
@@ -222,7 +237,7 @@ describe 'when pcore described resources types are in use' do
   end
 
   def find_resource_type(scope, name)
-    t1 = Puppet::Pops::Evaluator::Runtime3ResourceSupport.find_resource_type(scope, name)
+    Puppet::Pops::Evaluator::Runtime3ResourceSupport.find_resource_type(scope, name)
   end
 
   def generate_and_in_a_compilers_context(&block)

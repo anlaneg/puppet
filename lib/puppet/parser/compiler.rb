@@ -10,6 +10,8 @@ require 'puppet/pops'
 # Maintain a graph of scopes, along with a bunch of data
 # about the individual catalog we're compiling.
 class Puppet::Parser::Compiler
+  include Puppet::Parser::AbstractCompiler
+
   extend Forwardable
 
   include Puppet::Util
@@ -24,8 +26,8 @@ class Puppet::Parser::Compiler
     if !errors.empty?
       errors.each { |e| Puppet.err(e) } if errors.size > 1
       errmsg = [
-        "Compilation has been halted because: #{errors.first}",
-        "For more information, see https://docs.puppet.com/puppet/latest/reference/environments.html",
+        _("Compilation has been halted because: %{error}") % { error: errors.first },
+        _("For more information, see https://docs.puppet.com/puppet/latest/reference/environments.html"),
       ]
       raise(Puppet::Error, errmsg.join(' '))
     end
@@ -36,12 +38,13 @@ class Puppet::Parser::Compiler
     Puppet.log_exception(detail)
     raise
   rescue => detail
-    message = "#{detail} on node #{node.name}"
+    message = _("%{message} on node %{node}") % { message: detail, node: node.name }
     Puppet.log_exception(detail, message)
     raise Puppet::Error, message, detail.backtrace
- end
+  end
 
   attr_reader :node, :facts, :collections, :catalog, :resources, :relationships, :topscope
+  attr_reader :qualified_variables
 
   # Access to the configured loaders for 4x
   # @return [Puppet::Pops::Loader::Loaders] the configured loaders
@@ -141,6 +144,10 @@ class Puppet::Parser::Compiler
 
   # Return a list of all of the defined classes.
   def_delegator :@catalog, :classes, :classlist
+
+  def with_context_overrides(description = '', &block)
+    Puppet.override( @context_overrides , description, &block)
+  end
 
   # Compiler our catalog.  This mostly revolves around finding and evaluating classes.
   # This is the main entry into our catalog.
@@ -314,7 +321,7 @@ class Puppet::Parser::Compiler
       raise Puppet::Error, _("Invalid node mapping in %{app}: Mapping must be a hash") % { app: app.ref } unless mapping.is_a?(Hash)
       all_mapped = Set.new
       mapping.each do |k,v|
-        raise Puppet::Error, _("Invalid node mapping in %{app}: Key %{k} is not a Node") % { app: app.ref, k: k } unless k.is_a?(Puppet::Resource) && k.type == _('Node')
+        raise Puppet::Error, _("Invalid node mapping in %{app}: Key %{k} is not a Node") % { app: app.ref, k: k } unless k.is_a?(Puppet::Resource) && k.type == 'Node'
         v = [v] unless v.is_a?(Array)
         v.each do |res|
           raise Puppet::Error, _("Invalid node mapping in %{app}: Value %{res} is not a resource") % { app: app.ref, res: res } unless res.is_a?(Puppet::Resource)
@@ -347,7 +354,7 @@ class Puppet::Parser::Compiler
   # evaluated later in the process.
   #
   def evaluate_classes(classes, scope, lazy_evaluate = true)
-    raise Puppet::DevError, "No source for scope passed to evaluate_classes" unless scope.source
+    raise Puppet::DevError, _("No source for scope passed to evaluate_classes") unless scope.source
     class_parameters = nil
     # if we are a param class, save the classes hash
     # and transform classes to be the keys
@@ -405,6 +412,8 @@ class Puppet::Parser::Compiler
     set_options(options)
     initvars
     add_catalog_validators
+    # Resolutions of fully qualified variable names
+    @qualified_variables = {}
   end
 
   # Create a new scope, with either a specified parent scope or
@@ -451,10 +460,10 @@ class Puppet::Parser::Compiler
       component_ref = args['component']
       kind = args['kind']
 
-      # That component_ref is either a QNAME or a Class['literal'|QREF] is asserted during validation so no
+      # That component_ref is either a QREF or a Class['literal'|QREF] is asserted during validation so no
       # need to check that here
-      if component_ref.is_a?(Puppet::Pops::Model::QualifiedName)
-        component_name = component_ref.value
+      if component_ref.is_a?(Puppet::Pops::Model::QualifiedReference)
+        component_name = component_ref.cased_value
         component_type = 'type'
         component = krt.find_definition(component_name)
       else
@@ -463,7 +472,8 @@ class Puppet::Parser::Compiler
         component = krt.find_hostclass(component_name)
       end
       if component.nil?
-        raise Puppet::ParseError, "Capability mapping error: #{kind} clause references nonexistent #{component_type} #{component_name}"
+        raise Puppet::ParseError, _("Capability mapping error: %{kind} clause references nonexistent %{component_type} %{component_name}") %
+            { kind: kind, component_type: component_type, component_name: component_name }
       end
 
       blueprint = args['blueprint']
@@ -526,12 +536,12 @@ class Puppet::Parser::Compiler
     exceptwrap do
       Puppet::Util::Profiler.profile(_("Evaluated definitions"), [:compiler, :evaluate_definitions]) do
         urs = unevaluated_resources.each do |resource|
-         begin
+          begin
             resource.evaluate
-         rescue Puppet::Pops::Evaluator::PuppetStopIteration => detail
-           # needs to be handled specifically as the error has the file/line/position where this
-           # occurred rather than the resource
-           fail(Puppet::Pops::Issues::RUNTIME_ERROR, detail, {:detail => detail.message}, detail)
+          rescue Puppet::Pops::Evaluator::PuppetStopIteration => detail
+            # needs to be handled specifically as the error has the file/line/position where this
+            # occurred rather than the resource
+            fail(Puppet::Pops::Issues::RUNTIME_ERROR, detail, {:detail => detail.message}, detail)
 
           rescue Puppet::Error => e
             # PuppetError has the ability to wrap an exception, if so, use the wrapped exception's
@@ -654,7 +664,7 @@ class Puppet::Parser::Compiler
         data[target] = source_data.merge(metaparams_as_data(target, names))
       end
 
-      target.tag(*(source.tags))
+      target.merge_tags_from(source)
     end
   end
 
@@ -711,6 +721,7 @@ class Puppet::Parser::Compiler
     Puppet.override( @context_overrides , _("For initializing compiler")) do
       # THE MAGIC STARTS HERE ! This triggers parsing, loading etc.
       @catalog.version = environment.known_resource_types.version
+      @loaders.pre_load
     end
 
     @catalog.add_resource(Puppet::Parser::Resource.new("stage", :main, :scope => @topscope))
@@ -729,62 +740,23 @@ class Puppet::Parser::Compiler
   end
 
   def sanitize_node(node)
-    # Resurrect "trusted information" that comes from node/fact terminus.
-    # The current way this is done in puppet db (currently the only one)
-    # is to store the node parameter 'trusted' as a hash of the trusted information.
-    #
-    # Thus here there are two main cases:
-    # 1. This terminus was used in a real agent call (only meaningful if someone curls the request as it would
-    #  fail since the result is a hash of two catalogs).
-    # 2  It is a command line call with a given node that use a terminus that:
-    # 2.1 does not include a 'trusted' fact - use local from node trusted information
-    # 2.2 has a 'trusted' fact - this in turn could be
-    # 2.2.1 puppet db having stored trusted node data as a fact (not a great design)
-    # 2.2.2 some other terminus having stored a fact called "trusted" (most likely that would have failed earlier, but could
-    #       be spoofed).
-    #
-    # For the reasons above, the resurrection of trusted node data with authenticated => true is only performed
-    # if user is running as root, else it is resurrected as unauthenticated.
-    #
-    trusted_param = node.parameters['trusted']
-    if trusted_param
-      # Blows up if it is a parameter as it will be set as $trusted by the compiler as if it was a variable
-      node.parameters.delete('trusted')
-      unless trusted_param.is_a?(Hash) && %w{authenticated certname extensions}.all? {|key| trusted_param.has_key?(key) }
-        # trusted is some kind of garbage, do not resurrect
-        trusted_param = nil
-      end
-    else
-      # trusted may be Boolean false if set as a fact by someone
-      trusted_param = nil
-    end
-
-    # The options for node.trusted_data in priority order are:
-    # 1) node came with trusted_data so use that
-    # 2) else if there is :trusted_information in the puppet context
-    # 3) else if the node provided a 'trusted' parameter (parsed out above)
-    # 4) last, fallback to local node trusted information
-    #
-    # Note that trusted_data should be a hash, but (2) and (4) are not
-    # hashes, so we to_h at the end
-    if !node.trusted_data
-      trusted = Puppet.lookup(:trusted_information) do
-        trusted_param || Puppet::Context::TrustedInformation.local(node)
-      end
-
-      # Ruby 1.9.3 can't apply to_h to a hash, so check first
-      node.trusted_data = trusted.is_a?(Hash) ? trusted : trusted.to_h
-    end
-
+    node.sanitize
     node
   end
 
   # Set the node's parameters into the top-scope as variables.
   def set_node_parameters
     node.parameters.each do |param, value|
+      # We don't want to set @topscope['environment'] from the parameters,
+      # instead we want to get that from the node's environment itself in
+      # case a custom node terminus has done any mucking about with
+      # node.parameters.
+      next if param.to_s == 'environment'
       # Ensure node does not leak Symbol instances in general
       @topscope[param.to_s] = value.is_a?(Symbol) ? value.to_s : value
     end
+    @topscope['environment'] = node.environment.name.to_s
+
     # These might be nil.
     catalog.client_version = node.parameters["clientversion"]
     catalog.server_version = node.parameters["serverversion"]

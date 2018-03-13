@@ -15,19 +15,25 @@ class Checker4_0 < Evaluator::LiteralEvaluator
   attr_reader :acceptor
   attr_reader :migration_checker
 
+  def self.check_visitor
+    # Class instance variable rather than Class variable because methods visited
+    # may be overridden in subclass
+    @check_visitor ||= Visitor.new(nil, 'check', 0, 0)
+  end
+
   # Initializes the validator with a diagnostics producer. This object must respond to
   # `:will_accept?` and `:accept`.
   #
   def initialize(diagnostics_producer)
     super()
-    @@check_visitor       ||= Visitor.new(nil, "check", 0, 0)
     @@rvalue_visitor      ||= Visitor.new(nil, "rvalue", 0, 0)
     @@hostname_visitor    ||= Visitor.new(nil, "hostname", 1, 2)
     @@assignment_visitor  ||= Visitor.new(nil, "assign", 0, 1)
     @@query_visitor       ||= Visitor.new(nil, "query", 0, 0)
     @@relation_visitor    ||= Visitor.new(nil, "relation", 0, 0)
-    @@idem_visitor        ||= Visitor.new(self, "idem", 0, 0)
+    @@idem_visitor        ||= Visitor.new(nil, "idem", 0, 0)
 
+    @check_visitor = self.class.check_visitor
     @acceptor = diagnostics_producer
 
     # Use null migration checker unless given in context
@@ -51,7 +57,7 @@ class Checker4_0 < Evaluator::LiteralEvaluator
 
   # Performs regular validity check
   def check(o)
-    @@check_visitor.visit_this_0(self, o)
+    @check_visitor.visit_this_0(self, o)
   end
 
   # Performs check if this is a vaid hostname expression
@@ -286,8 +292,8 @@ class Checker4_0 < Evaluator::LiteralEvaluator
   def check_CapabilityMapping(o)
     ok =
     case o.component
-    when Model::QualifiedName
-      name = o.component.value
+    when Model::QualifiedReference
+      name = o.component.cased_value
       acceptor.accept(Issues::ILLEGAL_CLASSREF, o.component, {:name=>name}) unless name =~ Patterns::CLASSREF_EXT
       true
     when Model::AccessExpression
@@ -380,9 +386,7 @@ class Checker4_0 < Evaluator::LiteralEvaluator
   }
 
   FUTURE_RESERVED_WORDS = {
-    'application' => true,
-    'produces' => true,
-    'consumes' => true
+    'plan' => true
   }
 
   # for 'class', 'define', and function
@@ -668,6 +672,10 @@ class Checker4_0 < Evaluator::LiteralEvaluator
     # to enable better error message of the result of the expression rather than the static instruction.
     # (This can be revised as there are static constructs that are illegal, but require updating many
     # tests that expect the detailed reporting).
+    type_name_expr = o.type_name
+    if o.form && o.form != 'regular' && type_name_expr.is_a?(Model::QualifiedName) && type_name_expr.value == 'class'
+      acceptor.accept(Issues::CLASS_NOT_VIRTUALIZABLE, o)
+    end
   end
 
   def check_ResourceBody(o)
@@ -898,6 +906,10 @@ class Checker4_0 < Evaluator::LiteralEvaluator
 
   def idem_BinaryExpression(o)
     true
+  end
+
+  def idem_MatchExpression(o)
+    false # can have side effect of setting $n match variables
   end
 
   def idem_RelationshipExpression(o)

@@ -197,25 +197,33 @@ module Util
     }
   end
 
+  # execute a block of work and based on the logging level provided, log the provided message with the seconds taken
+  # The message 'msg' should include string ' in %{seconds} seconds' as part of the message and any content should escape
+  # any percent signs '%' so that they are not interpreted as formatting commands
+  #     escaped_str = str.gsub(/%/, '%%')
+  #
+  # @param msg [String] the message to be formated to assigned the %{seconds} seconds take to execute,
+  #                     other percent signs '%' need to be escaped
+  # @param level [Symbol] the logging level for this message
+  # @param object [Object] The object use for logging the message
   def benchmark(*args)
     msg = args.pop
     level = args.pop
-    object = nil
+    object = if args.empty?
+               if respond_to?(level)
+                 self
+               else
+                 Puppet
+               end
+             else
+               args.pop
+             end
 
-    if args.empty?
-      if respond_to?(level)
-        object = self
-      else
-        object = Puppet
-      end
-    else
-      object = args.pop
-    end
-
-    raise Puppet::DevError, "Failed to provide level to :benchmark" unless level
+    #TRANSLATORS 'benchmark' is a method name and should not be translated
+    raise Puppet::DevError, _("Failed to provide level to benchmark") unless level
 
     unless level == :none or object.respond_to? level
-      raise Puppet::DevError, "Benchmarked object does not respond to #{level}"
+      raise Puppet::DevError, _("Benchmarked object does not respond to %{value}") % { value: level }
     end
 
     # Only benchmark if our log level is high enough
@@ -223,9 +231,7 @@ module Util
       seconds = Benchmark.realtime {
         yield
       }
-      #TRANSLATORS forms the end of a string indicating how long a
-      # given operation took
-      object.send(level, msg + (_(" in %0.2f seconds") % seconds))
+      object.send(level, msg % { seconds: "%0.2f" % seconds })
       return seconds
     else
       yield
@@ -301,7 +307,7 @@ module Util
             when :posix
               AbsolutePathPosix
             else
-              raise Puppet::DevError, "unknown platform #{platform} in absolute_path"
+              raise Puppet::DevError, _("unknown platform %{platform} in absolute_path") % { platform: platform }
             end
 
     !! (path =~ regex)
@@ -325,7 +331,12 @@ module Util
       end
     end
 
-    params[:path] = URI.escape(path)
+    # have to split *after* any relevant escaping
+    params[:path], params[:query] = uri_encode(path).split('?')
+    search_for_fragment = params[:query] ? :query : :path
+    if params[search_for_fragment].include?('#')
+      params[search_for_fragment], _, params[:fragment] = params[search_for_fragment].rpartition('#')
+    end
 
     begin
       URI::Generic.build(params)
@@ -339,7 +350,9 @@ module Util
   def uri_to_path(uri)
     return unless uri.is_a?(URI)
 
-    path = URI.unescape(uri.path)
+    # CGI.unescape doesn't handle space rules properly in uri paths
+    # URI.unescape does, but returns strings in their original encoding
+    path = URI.unescape(uri.path.encode(Encoding::UTF_8))
 
     if Puppet.features.microsoft_windows? and uri.scheme == 'file'
       if uri.host
@@ -352,6 +365,115 @@ module Util
     path
   end
   module_function :uri_to_path
+
+  RFC_3986_URI_REGEX = /^(?<scheme>([^:\/?#]+):)?(?<authority>\/\/([^\/?#]*))?(?<path>[^?#]*)(\?(?<query>[^#]*))?(#(?<fragment>.*))?$/
+
+  # Percent-encodes a URI query parameter per RFC3986 - https://tools.ietf.org/html/rfc3986
+  #
+  # The output will correctly round-trip through URI.unescape
+  #
+  # @param [String query_string] A URI query parameter that may contain reserved
+  #   characters that must be percent encoded for the key or value to be
+  #   properly decoded as part of a larger query string:
+  #
+  #   query
+  #   encodes as : query
+  #
+  #   query_with_special=chars like&and * and# plus+this
+  #   encodes as:
+  #   query_with_special%3Dchars%20like%26and%20%2A%20and%23%20plus%2Bthis
+  #
+  #   Note: Also usable by fragments, but not suitable for paths
+  #
+  # @return [String] a new string containing an encoded query string per the
+  #   rules of RFC3986.
+  #
+  #   In particular,
+  #   query will encode + as %2B and space as %20
+  def uri_query_encode(query_string)
+    return nil if query_string.nil?
+
+    # query can encode space to %20 OR +
+    # + MUST be encoded as %2B
+    # in RFC3968 both query and fragment are defined as:
+    # = *( pchar / "/" / "?" )
+    # CGI.escape turns space into + which is the most backward compatible
+    # however it doesn't roundtrip through URI.unescape which prefers %20
+    CGI.escape(query_string).gsub('+', '%20')
+  end
+  module_function :uri_query_encode
+
+  # Percent-encodes a URI string per RFC3986 - https://tools.ietf.org/html/rfc3986
+  #
+  # Properly handles escaping rules for paths, query strings and fragments
+  # independently
+  #
+  # The output is safe to pass to URI.parse or URI::Generic.build and will
+  # correctly round-trip through URI.unescape
+  #
+  # @param [String path] A URI string that may be in the form of:
+  #
+  #   http://foo.com/bar?query
+  #   file://tmp/foo bar
+  #   //foo.com/bar?query
+  #   /bar?query
+  #   bar?query
+  #   bar
+  #   .
+  #   C:\Windows\Temp
+  #
+  #   Note that with no specified scheme, authority or query parameter delimiter
+  #   ? that a naked string will be treated as a path.
+  #
+  #   Note that if query parameters need to contain data such as & or =
+  #   that this method should not be used, as there is no way to differentiate
+  #   query parameter data from query delimiters when multiple parameters
+  #   are specified
+  #
+  # @param [Hash{Symbol=>String} opts] Options to alter encoding
+  # @option opts [Array<Symbol>] :allow_fragment defaults to false. When false
+  #   will treat # as part of a path or query and not a fragment delimiter
+  #
+  # @return [String] a new string containing appropriate portions of the URI
+  #   encoded per the rules of RFC3986.
+  #   In particular,
+  #   path will not encode +, but will encode space as %20
+  #   query will encode + as %2B and space as %20
+  #   fragment behaves like query
+  def uri_encode(path, opts = { :allow_fragment => false })
+    raise ArgumentError.new(_('path may not be nil')) if path.nil?
+
+    # ensure string starts as UTF-8 for the sake of Ruby 1.9.3
+    encoded = ''.encode!(Encoding::UTF_8)
+
+    # parse uri into named matches, then reassemble properly encoded
+    parts = path.match(RFC_3986_URI_REGEX)
+
+    encoded += parts[:scheme] unless parts[:scheme].nil?
+    encoded += parts[:authority] unless parts[:authority].nil?
+
+    # path requires space to be encoded as %20 (NEVER +)
+    # + should be left unencoded
+    # URI::parse and URI::Generic.build don't like paths encoded with CGI.escape
+    # URI.escape does not change / to %2F and : to %3A like CGI.escape
+    encoded += URI.escape(parts[:path]) unless parts[:path].nil?
+
+    # each query parameter
+    if !parts[:query].nil?
+      query_string = parts[:query].split('&').map do |pair|
+        # can optionally be separated by an =
+        pair.split('=').map do |v|
+          uri_query_encode(v)
+        end.join('=')
+      end.join('&')
+      encoded += '?' + query_string
+    end
+
+    encoded += ((opts[:allow_fragment] ? '#' : '%23') + uri_query_encode(parts[:fragment])) unless parts[:fragment].nil?
+
+    encoded
+  end
+  module_function :uri_encode
 
   def safe_posix_fork(stdin=$stdin, stdout=$stdout, stderr=$stderr, &block)
     child_pid = Kernel.fork do
@@ -437,11 +559,11 @@ module Util
   DEFAULT_WINDOWS_MODE = nil
 
   def replace_file(file, default_mode, &block)
-    raise Puppet::DevError, "replace_file requires a block" unless block_given?
+    raise Puppet::DevError, _("replace_file requires a block") unless block_given?
 
     if default_mode
       unless valid_symbolic_mode?(default_mode)
-        raise Puppet::DevError, "replace_file default_mode: #{default_mode} is invalid"
+        raise Puppet::DevError, _("replace_file default_mode: %{default_mode} is invalid") % { default_mode: default_mode }
       end
 
       mode = symbolic_mode_to_int(normalize_symbolic_mode(default_mode))
@@ -458,17 +580,10 @@ module Util
       # encoding for Uniquefile is not important here because the caller writes to it as it sees fit
       tempfile = Puppet::FileSystem::Uniquefile.new(Puppet::FileSystem.basename_string(file), Puppet::FileSystem.dir_string(file))
 
-      # Set properties of the temporary file before we write the content, because
-      # Tempfile doesn't promise to be safe from reading by other people, just
-      # that it avoids races around creating the file.
-      #
-      # Our Windows emulation is pretty limited, and so we have to carefully
-      # and specifically handle the platform, which has all sorts of magic.
-      # So, unlike Unix, we don't pre-prep security; we use the default "quite
-      # secure" tempfile permissions instead.  Magic happens later.
+      effective_mode =
       if !Puppet.features.microsoft_windows?
         # Grab the current file mode, and fall back to the defaults.
-        effective_mode =
+        
         if Puppet::FileSystem.exist?(file)
           stat = Puppet::FileSystem.lstat(file)
           tempfile.chown(stat.uid, stat.gid)
@@ -476,16 +591,16 @@ module Util
         else
           mode
         end
-
-        if effective_mode
-          # We only care about the bottom four slots, which make the real mode,
-          # and not the rest of the platform stat call fluff and stuff.
-          tempfile.chmod(effective_mode & 07777)
-        end
       end
 
       # OK, now allow the caller to write the content of the file.
       yield tempfile
+
+      if effective_mode
+        # We only care about the bottom four slots, which make the real mode,
+        # and not the rest of the platform stat call fluff and stuff.
+        tempfile.chmod(effective_mode & 07777)
+      end
 
       # Now, make sure the data (which includes the mode) is safe on disk.
       tempfile.flush
@@ -555,7 +670,7 @@ module Util
     ## NOTE: when debugging spec failures, these two lines can be very useful
     #puts err.inspect
     #puts Puppet::Util.pretty_backtrace(err.backtrace)
-    Puppet.log_exception(err, _("Could not %{message}: %{err}") % { message: message, err: err })
+    Puppet.log_exception(err, "#{message}: #{err}")
     Puppet::Util::Log.force_flushqueue()
     exit(code)
   end

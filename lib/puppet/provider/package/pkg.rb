@@ -43,7 +43,8 @@ Puppet::Type.type(:package).provide :pkg, :parent => Puppet::Provider::Package d
       when '-'
         {:status => 'known'}
       else
-        raise ArgumentError, _('Unknown format %s: %s[%s]') % [self.name, flags, flags[0..0]]
+        raise ArgumentError, _('Unknown format %{resource_name}: %{full_flags}[%{bad_flag}]') %
+            { resource_name: self.name, full_flags: flags, bad_flag: flags[0..0] }
       end
     ).merge(
       case flags[1..1]
@@ -52,7 +53,8 @@ Puppet::Type.type(:package).provide :pkg, :parent => Puppet::Provider::Package d
       when '-'
         {}
       else
-        raise ArgumentError, _('Unknown format %s: %s[%s]') % [self.name, flags, flags[1..1]]
+        raise ArgumentError, _('Unknown format %{resource_name}: %{full_flags}[%{bad_flag}]') %
+            { resource_name: self.name, full_flags: flags, bad_flag: flags[1..1] }
       end
     )
   end
@@ -82,7 +84,7 @@ Puppet::Type.type(:package).provide :pkg, :parent => Puppet::Provider::Package d
     when /known/
       {:status => 'known'}
     else
-      raise ArgumentError, _('Unknown format %s: %s') % [self.name, state]
+      raise ArgumentError, _('Unknown format %{resource_name}: %{state}') % { resource_name: self.name, state: state }
     end
   end
 
@@ -101,7 +103,7 @@ Puppet::Type.type(:package).provide :pkg, :parent => Puppet::Provider::Package d
       {:publisher => $1, :name => $2, :ensure => $3}.merge pkg_state($4).merge(ufoxi_flag($5))
 
     else
-      raise ArgumentError, _('Unknown line format %s: %s') % [self.name, line]
+      raise ArgumentError, _('Unknown line format %{resource_name}: %{parse_line}') % { resource_name: self.name, parse_line: line }
     end).merge({:provider => self.name})
   end
 
@@ -161,7 +163,8 @@ Puppet::Type.type(:package).provide :pkg, :parent => Puppet::Provider::Package d
           return false
         end
       }
-      raise Puppet::DevError, "No version of #{name} matching #{should} is installable, even though the package is currently installed"
+      raise Puppet::DevError, _("No version of %{name} matching %{should} is installable, even though the package is currently installed") %
+          { name: name, should: should }
     end
 
     false
@@ -171,12 +174,15 @@ Puppet::Type.type(:package).provide :pkg, :parent => Puppet::Provider::Package d
   # http://defect.opensolaris.org/bz/show_bug.cgi?id=19159%
   # notes that we can't use -Ha for the same even though the manual page reads that way.
   def latest
+    # Refresh package metadata before looking for latest versions
+    pkg(:refresh)
+
     lines = pkg(:list, "-Hvn", @resource[:name]).split("\n")
 
     # remove certificate expiration warnings from the output, but report them
     cert_warnings = lines.select { |line| line =~ /^Certificate/ }
     unless cert_warnings.empty?
-      Puppet.warning("pkg warning: #{cert_warnings.join(', ')}")
+      Puppet.warning(_("pkg warning: %{warnings}") % { warnings: cert_warnings.join(', ') })
     end
 
     lst = lines.select { |line| line !~ /^Certificate/ }.map { |line| self.class.parse_line(line) }

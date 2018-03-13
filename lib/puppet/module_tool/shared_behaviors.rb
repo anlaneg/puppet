@@ -76,10 +76,10 @@ module Puppet::ModuleTool::Shared
       }
 
       if forced?
-        range = SemanticPuppet::VersionRange.parse(@version) rescue SemanticPuppet::VersionRange.parse('>= 0.0.0')
+        range = Puppet::Module.parse_range(@version, @strict_semver) rescue Puppet::Module.parse_range('>= 0.0.0', @strict_semver)
       else
         range = (@conditions[mod]).map do |r|
-          SemanticPuppet::VersionRange.parse(r[:dependency]) rescue SemanticPuppet::VersionRange.parse('>= 0.0.0')
+          Puppet::Module.parse_range(r[:dependency], @strict_semver) rescue Puppet::Module.parse_range('>= 0.0.0', @strict_semver)
         end.inject(&:&)
       end
 

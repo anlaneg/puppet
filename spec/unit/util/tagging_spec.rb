@@ -1,4 +1,5 @@
 #! /usr/bin/env ruby
+# coding: utf-8
 require 'spec_helper'
 
 require 'puppet/util/tagging'
@@ -9,13 +10,6 @@ describe Puppet::Util::Tagging do
   it "should add tags to the returned tag list" do
     tagger.tag("one")
     expect(tagger.tags).to include("one")
-  end
-
-  it "should return a duplicate of the tag list, rather than the original" do
-    tagger.tag("one")
-    tags = tagger.tags
-    tags << "two"
-    expect(tagger.tags).to_not include("two")
   end
 
   it "should add all provided tags to the tag list" do
@@ -47,6 +41,61 @@ describe Puppet::Util::Tagging do
   it "should allow tags containing '.' characters" do
     expect { tagger.tag("good.tag") }.to_not raise_error
   end
+
+  # different UTF-8 widths
+  # 1-byte A
+  # 2-byte ۿ - http://www.fileformat.info/info/unicode/char/06ff/index.htm - 0xDB 0xBF / 219 191
+  # 3-byte ᚠ - http://www.fileformat.info/info/unicode/char/16A0/index.htm - 0xE1 0x9A 0xA0 / 225 154 160
+  # 4-byte ܎ - http://www.fileformat.info/info/unicode/char/2070E/index.htm - 0xF0 0xA0 0x9C 0x8E / 240 160 156 142
+  let (:mixed_utf8) { "A\u06FF\u16A0\u{2070E}" } # Aۿᚠ܎
+
+  it "should allow UTF-8 alphanumeric characters" do
+    expect { tagger.tag(mixed_utf8) }.not_to raise_error
+  end
+
+  # completely non-exhaustive list of a few UTF-8 punctuation characters
+  # http://www.fileformat.info/info/unicode/block/general_punctuation/utf8test.htm
+  [
+    "\u2020", # dagger †
+    "\u203B", # reference mark ※
+    "\u204F", # reverse semicolon ⁏
+    "!",
+    "@",
+    "#",
+    "$",
+    "%",
+    "^",
+    "&",
+    "*",
+    "(",
+    ")",
+    "-",
+    "+",
+    "=",
+    "{",
+    "}",
+    "[",
+    "]",
+    "|",
+    "\\",
+    "/",
+    "?",
+    "<",
+    ">",
+    ",",
+    ".",
+    "~",
+    ",",
+    ":",
+    ";",
+    "\"",
+    "'",
+  ].each do |char|
+    it "should not allow UTF-8 punctuation characters" do
+      expect { tagger.tag(char) }.to raise_error(Puppet::ParseError)
+    end
+  end
+
 
   it "should add qualified classes as tags" do
     tagger.tag("one::two")

@@ -47,7 +47,7 @@
 #
 # @example Using the `reduce` function
 #
-# ~~~ puppet
+# ```puppet
 # # Reduce the array $data, returning the sum of all values in the array.
 # $data = [1, 2, 3]
 # $sum = $data.reduce |$memo, $value| { $memo + $value }
@@ -68,11 +68,11 @@
 #   [$string, $number]
 # }
 # # $combine contains [abc, 6]
-# ~~~
+# ```
 #
 # @example Using the `reduce` function with a start memo and two-parameter lambda
 #
-# ~~~ puppet
+# ```puppet
 # # Reduce the array $data, returning the sum of all values in the array and starting
 # # with $memo set to an arbitrary value instead of $data's first value.
 # $data = [1, 2, 3]
@@ -92,7 +92,38 @@
 # # At the start of the lambda's first iteration, $memo contains [d, 4] and $value
 # # contains [a, 1].
 # # $combine contains [dabc, 10]
-# ~~~
+# ```
+#
+# @example Using the `reduce` function to reduce a hash of hashes
+#
+# ```puppet
+# # Reduce a hash of hashes $data, merging defaults into the inner hashes.
+# $data = {
+#   'connection1' => {
+#     'username' => 'user1',
+#     'password' => 'pass1',
+#   },
+#   'connection_name2' => {
+#     'username' => 'user2',
+#     'password' => 'pass2',
+#   },
+# }
+#
+# $defaults = {
+#   'maxActive' => '20',
+#   'maxWait'   => '10000',
+#   'username'  => 'defaultuser',
+#   'password'  => 'defaultpass',
+# }
+#
+# $merged = $data.reduce( {} ) |$memo, $x| {
+#   $memo + { $x[0] => $defaults + $data[$x[0]] }
+# }
+# # At the start of the lambda's first iteration, $memo is set to {}, and $x is set to
+# # the first [key, value] tuple. The key in $data is, therefore, given by $x[0]. In
+# # subsequent rounds, $memo retains the value returned by the expression, i.e.
+# # $memo + { $x[0] => $defaults + $data[$x[0]] }.
+# ```
 #
 # @since 4.0.0
 #
@@ -111,11 +142,23 @@ Puppet::Functions.create_function(:reduce) do
 
   def reduce_without_memo(enumerable)
     enum = Puppet::Pops::Types::Iterable.asserted_iterable(self, enumerable)
-    enum.reduce {|memo, x| yield(memo, x) }
+    enum.reduce do |memo, x|
+      begin
+        yield(memo, x)
+      rescue StopIteration
+        return memo
+      end
+    end
   end
 
   def reduce_with_memo(enumerable, given_memo)
     enum = Puppet::Pops::Types::Iterable.asserted_iterable(self, enumerable)
-    enum.reduce(given_memo) {|memo, x| yield(memo, x) }
+    enum.reduce(given_memo) do |memo, x|
+      begin
+        yield(memo, x)
+      rescue StopIteration
+        return memo
+      end
+    end
   end
 end

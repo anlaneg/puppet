@@ -391,7 +391,7 @@ class Type
     @key_attributes_cache ||= key_attribute_parameters.collect { |p| p.name }
   end
 
-  # Returns a mapping from the title string to setting of attribute value(s).
+  # Returns a mapping from the title string to setting of attribute values.
   # This default implementation provides a mapping of title to the one and only _namevar_ present
   # in the type's definition.
   # @note Advanced: some logic requires this mapping to be done differently, using a different
@@ -425,7 +425,7 @@ class Type
     when 1;
       [ [ /(.*)/m, [ [key_attributes.first] ] ] ]
     else
-      raise Puppet::DevError,"you must specify title patterns when there are two or more key attributes"
+      raise Puppet::DevError, _("you must specify title patterns when there are two or more key attributes")
     end
   end
 
@@ -500,11 +500,10 @@ class Type
     # This is here for types that might still have the old method of defining
     # a parent class.
     unless options.is_a? Hash
-      raise Puppet::DevError,
-        "Options must be a hash, not #{options.inspect}"
+      raise Puppet::DevError, _("Options must be a hash, not %{type}") % { type: options.inspect }
     end
 
-    raise Puppet::DevError, "Class #{self.name} already has a property named #{name}" if @validproperties.include?(name)
+    raise Puppet::DevError, _("Class %{class_name} already has a property named %{property}") % { class_name: self.name, property: name } if @validproperties.include?(name)
 
     if parent = options[:parent]
       options.delete(:parent)
@@ -590,7 +589,7 @@ class Type
 
   # @return [Boolean] Returns true if the given name is the name of an existing parameter
   def self.validparameter?(name)
-    raise Puppet::DevError, "Class #{self} has not defined parameters" unless defined?(@parameters)
+    raise Puppet::DevError, _("Class %{class_name} has not defined parameters") % { class_name: self } unless defined?(@parameters)
     !!(@paramhash.include?(name) or @@metaparamhash.include?(name))
   end
 
@@ -674,7 +673,8 @@ class Type
         # make sure the parameter doesn't have any errors
         property.value = value
       rescue Puppet::Error, ArgumentError => detail
-        error = Puppet::ResourceError.new("Parameter #{name} failed on #{ref}: #{detail}")
+        error = Puppet::ResourceError.new(_("Parameter %{name} failed on %{ref}: %{detail}") %
+                                              { name: name, ref: ref, detail: detail })
         adderrorcontext(error, detail)
         raise error
       end
@@ -696,7 +696,7 @@ class Type
     if @parameters.has_key?(attr)
       @parameters.delete(attr)
     else
-      raise Puppet::DevError.new("Undefined attribute '#{attr}' in #{self}")
+      raise Puppet::DevError.new(_("Undefined attribute '%{attribute}' in %{name}") % { attribute: attr, name: self})
     end
   end
 
@@ -1018,8 +1018,8 @@ class Type
 
     if property = @parameters[:ensure]
       unless is.include? property
-        raise Puppet::DevError,
-          "The is value is not in the is array for '#{property.name}'"
+        #TRANSLATORS 'is' is a variable name and should not be translated
+        raise Puppet::DevError, _("The 'is' value is not in the 'is' array for '%{name}'") % { name: property.name }
       end
       ensureis = is[property]
       if property.safe_insync?(ensureis) and property.should == :absent
@@ -1029,8 +1029,8 @@ class Type
 
     properties.each { |prop|
       unless is.include? prop
-        raise Puppet::DevError,
-          "The is value is not in the is array for '#{prop.name}'"
+        #TRANSLATORS 'is' is a variable name and should not be translated
+        raise Puppet::DevError, _("The 'is' value is not in the 'is' array for '%{name}'") % { name: prop.name }
       end
 
       propis = is[prop]
@@ -1156,17 +1156,11 @@ class Type
   # Either requires providers or must be overridden.
   # @raise [Puppet::DevError] when there are no providers and the implementation has not overridden this method.
   def self.instances
-    raise Puppet::DevError, "#{self.name} has no providers and has not overridden 'instances'" if provider_hash.empty?
+    raise Puppet::DevError, _("%{name} has no providers and has not overridden 'instances'") % { name: self.name } if provider_hash.empty?
 
     # Put the default provider first, then the rest of the suitable providers.
     provider_instances = {}
     providers_by_source.collect do |provider|
-      self.properties.find_all do |property|
-        provider.supports_parameter?(property)
-      end.collect do |property|
-        property.name
-      end
-
       provider.instances.collect do |instance|
         # We always want to use the "first" provider instance we find, unless the resource
         # is already managed and has a different provider set
@@ -1295,9 +1289,7 @@ class Type
   end
 
   newmetaparam(:audit) do
-    desc "(This metaparameter is deprecated and will be ignored in a future release.)
-
-      Marks a subset of this resource's unmanaged attributes for auditing. Accepts an
+    desc "Marks a subset of this resource's unmanaged attributes for auditing. Accepts an
       attribute name, an array of attribute names, or `all`.
 
       Auditing a resource attribute has two effects: First, whenever a catalog
@@ -1318,12 +1310,6 @@ class Type
       and the second run will log the edit made by Puppet.)"
 
     validate do |list|
-      if Puppet.settings[:strict] != :off
-        # Only warn if `audit` metaparam came from a manifest
-        if file && line
-          puppet_deprecation_warning(_("The `audit` metaparameter is deprecated and will be ignored in a future release."), { :line => line, :file => file })
-        end
-      end
       list = Array(list).collect {|p| p.to_sym}
       unless list == [:all]
         list.each do |param|
@@ -1350,9 +1336,9 @@ class Type
 
     def properties_to_audit(list)
       if !list.kind_of?(Array) && list.to_sym == :all
-        list = all_properties
+        all_properties
       else
-        list = Array(list).collect { |p| p.to_sym }
+        Array(list).collect { |p| p.to_sym }
       end
     end
   end
@@ -1364,9 +1350,9 @@ class Type
 
       The order of the log levels, in decreasing priority, is:
 
-      * `crit`
       * `emerg`
       * `alert`
+      * `crit`
       * `err`
       * `warning`
       * `notice`
@@ -1429,7 +1415,7 @@ class Type
     munge do |aliases|
       aliases = [aliases] unless aliases.is_a?(Array)
 
-      raise(ArgumentError, "Cannot add aliases without a catalog") unless @resource.catalog
+      raise(ArgumentError, _("Cannot add aliases without a catalog")) unless @resource.catalog
 
       aliases.each do |other|
         if obj = @resource.catalog.resource(@resource.class.name, other)
@@ -1488,7 +1474,7 @@ class Type
       @subclasses << sub
     end
 
-    # @return [Array<Puppet::Resource>] turns attribute value(s) into list of resources
+    # @return [Array<Puppet::Resource>] turns attribute values into list of resources
     def munge(references)
       references = [references] unless references.is_a?(Array)
       references.collect do |ref|
@@ -1508,7 +1494,8 @@ class Type
       @value.each do |ref|
         unless @resource.catalog.resource(ref.to_s)
           description = self.class.direction == :in ? "dependency" : "dependent"
-          fail ResourceError, "Could not find #{description} #{ref} for #{resource.ref}"
+          fail ResourceError, _("Could not find %{description} %{ref} for %{resource}") %
+              { description: description, ref: ref, resource: resource.ref }
         end
       end
     end
@@ -1551,12 +1538,25 @@ class Type
             :event => self.class.events,
             :callback => method
           }
-          self.debug { "subscribes to #{related_resource.ref}" }
         else
           # If there's no callback, there's no point in even adding
           # a label.
           subargs = nil
-          self.debug { "subscribes to #{related_resource.ref}" }
+        end
+
+        ## Corrected syntax of debug statement to reflect the way this was called.
+        # i.e. before, after, subscribe, notify
+        self.debug do
+          relation = case self.class.name
+          when "subscribe"
+            "subscribes"
+          when "notify"
+            "notifies"
+          else
+            self.class.name
+          end
+
+          "#{relation} to #{related_resource.ref}"
         end
 
         Puppet::Relationship.new(source, target, subargs)
@@ -1582,7 +1582,7 @@ class Type
       Multiple resources can be specified as an array of references. When this
       attribute is present:
 
-      * The required resource(s) will be applied **before** this resource.
+      * The required resources will be applied **before** this resource.
 
       This is one of the four relationship metaparameters, along with
       `before`, `notify`, and `subscribe`. For more context, including the
@@ -1596,7 +1596,7 @@ class Type
       Multiple resources can be specified as an array of references. When this
       attribute is present:
 
-      * The subscribed resource(s) will be applied _before_ this resource.
+      * The subscribed resources will be applied _before_ this resource.
       * If Puppet makes changes to any of the subscribed resources, it will cause
         this resource to _refresh._ (Refresh behavior varies by resource
         type: services will restart, mounts will unmount and re-mount, etc. Not
@@ -1614,7 +1614,7 @@ class Type
       Multiple resources can be specified as an array of references. When this
       attribute is present:
 
-      * This resource will be applied _before_ the dependent resource(s).
+      * This resource will be applied _before_ the dependent resources.
 
       This is one of the four relationship metaparameters, along with
       `require`, `notify`, and `subscribe`. For more context, including the
@@ -1628,7 +1628,7 @@ class Type
       Multiple resources can be specified as an array of references. When this
       attribute is present:
 
-      * This resource will be applied _before_ the notified resource(s).
+      * This resource will be applied _before_ the notified resources.
       * If Puppet makes changes to this resource, it will cause all of the
         notified resources to _refresh._ (Refresh behavior varies by resource
         type: services will restart, mounts will unmount and re-mount, etc. Not
@@ -1700,7 +1700,7 @@ The value of this parameter must be a reference to a capability resource,
 or an array of such references. Each capability resource referenced here
 must have been exported by another resource in the same environment.
 
-The referenced capability resource(s) will be looked up, added to the
+The referenced capability resources will be looked up, added to the
 current node catalog, and processed following the underlying consumes
 clause.
 
@@ -1767,9 +1767,8 @@ end
     defaults = defaults.find_all { |provider| provider.specificity == max }
 
     if defaults.length > 1
-      Puppet.warning(
-        "Found multiple default providers for #{self.name}: #{defaults.collect { |i| i.name.to_s }.join(", ")}; using #{defaults[0].name}"
-      )
+      Puppet.warning(_("Found multiple default providers for %{name}: %{provider_list}; using %{selected_provider}") %
+                         { name: self.name, provider_list:  defaults.collect { |i| i.name.to_s }.join(", "), selected_provider: defaults[0].name })
     end
 
     @defaultprovider = defaults.shift unless defaults.empty?
@@ -1853,8 +1852,7 @@ end
         if provider = self.provider(pname)
           provider
         else
-          raise Puppet::DevError,
-            "Could not find parent provider #{pname} of #{name}"
+          raise Puppet::DevError, _("Could not find parent provider %{parent} of %{name}") % { parent: pname, name: name }
         end
       end
     else
@@ -1930,7 +1928,7 @@ end
         provider_class = provider_class.class.name if provider_class.is_a?(Puppet::Provider)
 
         unless @resource.class.provider(provider_class)
-          raise ArgumentError, "Invalid #{@resource.class.name} provider '#{provider_class}'"
+          raise ArgumentError, _("Invalid %{resource} provider '%{provider_class}'") % { resource: @resource.class.name, provider_class: provider_class}
         end
       end
 
@@ -2013,7 +2011,7 @@ end
     elsif klass = self.class.provider(name)
       @provider = klass.new(self)
     else
-      raise ArgumentError, "Could not find #{name} provider of #{self.class.name}"
+      raise ArgumentError, _("Could not find %{name} provider of %{provider}") % { name: name, provider: self.class.name }
     end
   end
 
@@ -2130,7 +2128,7 @@ end
   #
   def autorelation(rel_type, rel_catalog = nil)
     rel_catalog ||= catalog
-    raise(Puppet::DevError, "You cannot add relationships without a catalog") unless rel_catalog
+    raise Puppet::DevError, _("You cannot add relationships without a catalog") unless rel_catalog
 
     reqs = []
 
@@ -2233,8 +2231,6 @@ end
   include Enumerable
 
   # class methods dealing with Type management
-
-  public
 
   # The Type class attribute accessors
   class << self
@@ -2345,8 +2341,6 @@ end
   # instance methods related to instance intrinsics
   # e.g., initialize and name
 
-  public
-
   # @return [Hash] hash of parameters originally defined
   # @api private
   attr_reader :original_parameters
@@ -2390,7 +2384,7 @@ end
       end
     end
 
-    @tags = resource.tags
+    merge_tags_from(resource)
 
     @original_parameters = resource.to_hash
 
@@ -2441,11 +2435,12 @@ end
       if p.is_a?(Puppet::Property)
         p.sensitive = true
       elsif p.is_a?(Puppet::Parameter)
-        warning("Unable to mark '#{name}' as sensitive: #{name} is a parameter and not a property, and cannot be automatically redacted.")
+        warning(_("Unable to mark '%{name}' as sensitive: %{name} is a parameter and not a property, and cannot be automatically redacted.") %
+                    { name: name })
       elsif self.class.attrclass(name)
-        warning("Unable to mark '#{name}' as sensitive: the property itself was not assigned a value.")
+        warning(_("Unable to mark '%{name}' as sensitive: the property itself was not assigned a value.") % { name: name })
       else
-        err("Unable to mark '#{name}' as sensitive: the property itself is not defined on #{type}.")
+        err(_("Unable to mark '%{name}' as sensitive: the property itself is not defined on %{type}.") % { name: name, type: type })
       end
     end
   end
@@ -2496,7 +2491,7 @@ end
       rescue ArgumentError, Puppet::Error, TypeError
         raise
       rescue => detail
-        error = Puppet::DevError.new( "Could not set #{attr} on #{self.class.name}: #{detail}")
+        error = Puppet::DevError.new(_("Could not set %{attribute} on %{class_name}: %{detail}") % { attribute: attr, class_name: self.class.name, detail: detail })
         error.set_backtrace(detail.backtrace)
         raise error
       end
@@ -2633,7 +2628,7 @@ end
   #
   def to_resource
     resource = self.retrieve_resource
-    resource.tag(*self.tags)
+    resource.merge_tags_from(self)
 
     @parameters.each do |name, param|
       # Avoid adding each instance name twice

@@ -331,7 +331,7 @@ describe Puppet::Application::Apply do
 
       it "should save the last run summary" do
         Puppet[:noop] = false
-        report = Puppet::Transaction::Report.new("apply")
+        report = Puppet::Transaction::Report.new
         Puppet::Transaction::Report.stubs(:new).returns(report)
 
         Puppet::Configurer.any_instance.expects(:save_last_run_summary).with(report)
@@ -489,15 +489,6 @@ describe Puppet::Application::Apply do
   it "should honor the catalog_cache_terminus setting" do
     Puppet.settings[:catalog_cache_terminus] = "json"
     Puppet::Resource::Catalog.indirection.expects(:cache_class=).with(:json)
-
-    @apply.initialize_app_defaults
-    @apply.setup
-  end
-
-  it "should set catalog cache class to nil during a noop run" do
-    Puppet[:catalog_cache_terminus] = "json"
-    Puppet[:noop] = true
-    Puppet::Resource::Catalog.indirection.expects(:cache_class=).with(nil)
 
     @apply.initialize_app_defaults
     @apply.setup

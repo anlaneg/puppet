@@ -34,7 +34,7 @@ module HeredocSupport
       endtag = $1.strip
     end
 
-    lex_error(Issues::HEREDOC_MISSING_ENDTAG) unless endtag.length >= 1
+    lex_error(Issues::HEREDOC_EMPTY_ENDTAG) unless endtag.length >= 1
 
     resulting_escapes = []
     if escapes
@@ -133,7 +133,7 @@ module HeredocSupport
       lines = lines.collect {|s| s.gsub(leading_pattern, '') }
     end
     result = lines.join('')
-    result.gsub!(/\r?\n$/, '') if remove_break
+    result.gsub!(/\r?\n\z/m, '') if remove_break
     result
   end
 

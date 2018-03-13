@@ -196,8 +196,9 @@ class Puppet::Provider::NameService::DirectoryService < Puppet::Provider::NameSe
     # zeroes. If someone attempts to use a password hash that worked with
     # a previous version of OS X, we will fail early and warn them.
     if password_hash.length != 136
-      fail(_("OS X 10.7 requires a Salted SHA512 hash password of 136 characters. \
-           Please check your password and try again."))
+      #TRANSLATORS 'OS X 10.7' is an operating system and should not be translated, 'Salted SHA512' is the name of a hashing algorithm
+      fail(_("OS X 10.7 requires a Salted SHA512 hash password of 136 characters.") +
+           ' ' + _("Please check your password and try again."))
     end
 
     plist_file = "#{users_plist_dir}/#{resource_name}.plist"
@@ -372,7 +373,7 @@ class Puppet::Provider::NameService::DirectoryService < Puppet::Provider::NameSe
   # expects to be returned by addcmd. Thus we don't bother defining addcmd.
   def create
     if exists?
-      info "already exists"
+      info _("already exists")
       return nil
     end
 
@@ -401,10 +402,10 @@ class Puppet::Provider::NameService::DirectoryService < Puppet::Provider::NameSe
       next if property == :ensure
       value = @resource.should(property)
       if property == :gid and value.nil?
-        value = self.class.next_system_id(id_type='gid')
+        value = self.class.next_system_id('gid')
       end
       if property == :uid and value.nil?
-        value = self.class.next_system_id(id_type='uid')
+        value = self.class.next_system_id('uid')
       end
       if value != "" and not value.nil?
         if property == :members
@@ -430,7 +431,7 @@ class Puppet::Provider::NameService::DirectoryService < Puppet::Provider::NameSe
         cmd = [:dseditgroup, "-o", "edit", "-n", ".", "-d", member, @resource[:name]]
         begin
           execute(cmd)
-        rescue Puppet::ExecutionFailure => detail
+        rescue Puppet::ExecutionFailure
           # TODO: We're falling back to removing the member using dscl due to rdar://8481241
           # This bug causes dseditgroup to fail to remove a member if that member doesn't exist
           cmd = [:dscl, ".", "-delete", "/Groups/#{@resource.name}", "GroupMembership", member]

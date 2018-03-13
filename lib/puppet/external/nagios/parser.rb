@@ -14,7 +14,7 @@ require 'strscan'
 class ::Nagios::Parser::SyntaxError < RuntimeError; end
 
 def parse(src)
-  if src.respond_to?("force_encoding") then
+  if (RUBY_VERSION < '2.1.0') && src.respond_to?("force_encoding") then
     src.force_encoding("ASCII-8BIT")
   end
   @ss = StringScanner.new(src)
@@ -397,4 +397,4 @@ def _reduce_none(val, _values, result)
 end
 
   end   # class Parser
-  end   # module Nagios
+end   # module Nagios

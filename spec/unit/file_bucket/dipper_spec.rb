@@ -91,15 +91,24 @@ describe Puppet::FileBucket::Dipper, :uses_checksums => true do
         end
 
         it "should properly diff files on the filebucket" do
-          file1 = make_tmp_file("OriginalContent")
-          file2 = make_tmp_file("ModifiedContent")
+          file1 = make_tmp_file("OriginalContent\n")
+          file2 = make_tmp_file("ModifiedContent\n")
           @dipper = Puppet::FileBucket::Dipper.new(:Path => tmpdir("bucket"))
           checksum1 = @dipper.backup(file1)
           checksum2 = @dipper.backup(file2)
 
           # Diff without the context
-          diff12 = `diff -uN #{file1} #{file2} | sed '1,2d'`
-          diff21 = `diff -uN #{file2} #{file1} | sed '1,2d'`
+          # Lines we need to see match 'Content' instead of trimming diff output filter out
+          # surrounding noise...or hard code the check values
+          if Facter.value(:osfamily) == 'Solaris' &&
+            Puppet::Util::Package.versioncmp(Facter.value(:operatingsystemrelease), '11.0') >= 0
+            # Use gdiff on Solaris
+            diff12 = Puppet::Util::Execution.execute("gdiff -uN #{file1} #{file2}| grep Content")
+            diff21 = Puppet::Util::Execution.execute("gdiff -uN #{file2} #{file1}| grep Content")
+          else
+            diff12 = Puppet::Util::Execution.execute("diff -uN #{file1} #{file2}| grep Content")
+            diff21 = Puppet::Util::Execution.execute("diff -uN #{file2} #{file1}| grep Content")
+          end
 
           expect(@dipper.diff(checksum1, checksum2, nil, nil)).to include(diff12)
           expect(@dipper.diff(checksum1, nil, nil, file2)).to include(diff12)
@@ -136,13 +145,13 @@ describe Puppet::FileBucket::Dipper, :uses_checksums => true do
   describe "listing files in local filebucket" do
     with_digest_algorithms do
       it "should list all files present" do
+        if Puppet::Util::Platform.windows? && digest_algorithm == "sha512"
+          skip "PUP-8257: Skip file bucket test on windows for #{digest_algorithm} due to long path names"
+        end
         Puppet[:bucketdir] =  "/my/bucket"
         file_bucket = tmpdir("bucket")
 
         @dipper = Puppet::FileBucket::Dipper.new(:Path => file_bucket)
-
-        onehour=60*60
-        twohours=onehour*2
 
         #First File
         file1 = make_tmp_file(plaintext)
@@ -170,7 +179,6 @@ describe Puppet::FileBucket::Dipper, :uses_checksums => true do
         checksum = digest(plaintext)
         expect(digest(plaintext)).to eq(checksum)
         expect(@dipper.backup(file3)).to eq(checksum)
-        date = Time.now
         expected_list3 = /#{checksum} \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} #{real_path}\n/
 
         result = @dipper.list(nil, nil)
@@ -181,6 +189,9 @@ describe Puppet::FileBucket::Dipper, :uses_checksums => true do
       end
 
       it "should filter with the provided dates" do
+        if Puppet::Util::Platform.windows? && digest_algorithm == "sha512"
+          skip "PUP-8257: Skip file bucket test on windows for #{digest_algorithm} due to long path names"
+        end
         Puppet[:bucketdir] =  "/my/bucket"
         file_bucket = tmpdir("bucket")
 
@@ -285,6 +296,9 @@ describe Puppet::FileBucket::Dipper, :uses_checksums => true do
   describe "backing up and retrieving local files" do
     with_digest_algorithms do
       it "should backup files to a local bucket" do
+        if Puppet::Util::Platform.windows? && digest_algorithm == "sha512"
+          skip "PUP-8257: Skip file bucket test on windows for #{digest_algorithm} due to long path names"
+        end
         Puppet[:bucketdir] = "/non/existent/directory"
         file_bucket = tmpdir("bucket")
 
@@ -302,7 +316,9 @@ describe Puppet::FileBucket::Dipper, :uses_checksums => true do
 
         file = make_tmp_file(plaintext)
 
-        Puppet::FileBucket::File.indirection.expects(:head).returns true
+        Puppet::FileBucket::File.indirection.expects(:head).with(
+          regexp_matches(%r{#{digest_algorithm}/#{checksum}}), :bucket_path => "/my/bucket"
+        ).returns true
         Puppet::FileBucket::File.indirection.expects(:save).never
         expect(@dipper.backup(file)).to eq(checksum)
       end

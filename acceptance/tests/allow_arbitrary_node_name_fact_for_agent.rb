@@ -1,5 +1,10 @@
 test_name "node_name_fact should be used to determine the node name for puppet agent"
 
+tag 'audit:medium',
+    'audit:integration',  # Tests that the server properly overrides certname with node_name fact.
+                          # Testing of passenger master is no longer needed.
+    'server'
+
 success_message = "node_name_fact setting was correctly used to determine the node name"
 
 testdir = master.tmpdir("nodenamefact")
@@ -48,7 +53,7 @@ authorization: {
             }
             allow: "*"
             sort-order: 500
-            name: "puppetlabs catalog"
+            name: "puppetlabs catalog #{node_name}"
         },
         {
             match-request: {
@@ -58,7 +63,7 @@ authorization: {
             }
             allow: "*"
             sort-order: 500
-            name: "puppetlabs node"
+            name: "puppetlabs node #{node_name}"
         },
         {
             match-request: {
@@ -68,7 +73,7 @@ authorization: {
             }
             allow: "*"
             sort-order: 500
-            name: "puppetlabs report"
+            name: "puppetlabs report #{node_name}"
         },
       NODE_RULES
     end

@@ -8,7 +8,6 @@ require 'securerandom'
 class Puppet::Configurer
   require 'puppet/configurer/fact_handler'
   require 'puppet/configurer/plugin_handler'
-  require 'puppet/configurer/downloader_factory'
 
   include Puppet::Configurer::FactHandler
 
@@ -56,15 +55,16 @@ class Puppet::Configurer
     end
   end
 
-  def initialize(factory = Puppet::Configurer::DownloaderFactory.new, transaction_uuid = nil)
+  def initialize(transaction_uuid = nil, job_id = nil)
     @running = false
     @splayed = false
     @cached_catalog_status = 'not_used'
     @environment = Puppet[:environment]
     @transaction_uuid = transaction_uuid || SecureRandom.uuid
+    @job_id = job_id
     @static_catalog = true
     @checksum_type = Puppet[:supported_checksum_types]
-    @handler = Puppet::Configurer::PluginHandler.new(factory)
+    @handler = Puppet::Configurer::PluginHandler.new()
   end
 
   # Get the remote catalog, yo.  Returns nil if no catalog can be found.
@@ -115,6 +115,9 @@ class Puppet::Configurer
     if options[:pluginsync]
       remote_environment_for_plugins = Puppet::Node::Environment.remote(@environment)
       download_plugins(remote_environment_for_plugins)
+
+      Puppet::GettextConfig.reset_text_domain('agent')
+      Puppet::ModuleTranslations.load_from_vardir(Puppet[:vardir])
     end
 
     facts_hash = {}
@@ -133,6 +136,7 @@ class Puppet::Configurer
     # set report host name now that we have the fact
     options[:report].host = Puppet[:node_name_value]
     query_options[:transaction_uuid] = @transaction_uuid
+    query_options[:job_id] = @job_id
     query_options[:static_catalog] = @static_catalog
 
     # Query params don't enforce ordered evaluation, so munge this list into a
@@ -160,14 +164,13 @@ class Puppet::Configurer
     nil
   end
 
-  # Retrieve (optionally) and apply a catalog. If a catalog is passed in
-  # the options, then apply that one, otherwise retrieve it.
+  # Apply supplied catalog and return associated application report
   def apply_catalog(catalog, options)
     report = options[:report]
     begin
       report.configuration_version = catalog.version
 
-      benchmark(:notice, _("Applied catalog")) do
+      benchmark(:notice, _("Applied catalog in %{seconds} seconds")) do
         catalog.apply(options)
       end
     ensure
@@ -185,7 +188,7 @@ class Puppet::Configurer
     # environment and transaction_uuid very early, this is to ensure
     # they are sent regardless of any catalog compilation failures or
     # exceptions.
-    options[:report] ||= Puppet::Transaction::Report.new("apply", nil, @environment, @transaction_uuid)
+    options[:report] ||= Puppet::Transaction::Report.new(nil, @environment, @transaction_uuid, @job_id)
     report = options[:report]
     init_storage
 
@@ -232,6 +235,9 @@ class Puppet::Configurer
     # If a cached catalog is explicitly requested, attempt to retrieve it. Skip the node request,
     # don't pluginsync and switch to the catalog's environment if we successfully retrieve it.
     if Puppet[:use_cached_catalog]
+      Puppet::GettextConfig.reset_text_domain('agent')
+      Puppet::ModuleTranslations.load_from_vardir(Puppet[:vardir])
+
       if catalog = prepare_and_retrieve_catalog_from_cache
         options[:catalog] = catalog
         @cached_catalog_status = 'explicitly_requested'
@@ -292,11 +298,10 @@ class Puppet::Configurer
       end
 
       current_environment = Puppet.lookup(:current_environment)
-      local_node_environment =
       if current_environment.name == @environment.intern
-        current_environment
+        local_node_environment = current_environment
       else
-        Puppet::Node::Environment.create(@environment,
+        local_node_environment = Puppet::Node::Environment.create(@environment,
                                          current_environment.modulepath,
                                          current_environment.manifest,
                                          current_environment.config_version)
@@ -374,7 +379,7 @@ class Puppet::Configurer
               :transaction_uuid => @transaction_uuid,
               :fail_on_404 => false)
           found = true
-        rescue Exception => e
+        rescue
           # Nothing to see here
         end
       end
@@ -419,8 +424,13 @@ class Puppet::Configurer
   def retrieve_catalog_from_cache(query_options)
     result = nil
     @duration = thinmark do
-      result = Puppet::Resource::Catalog.indirection.find(Puppet[:node_name_value],
-        query_options.merge(:ignore_terminus => true, :environment => Puppet::Node::Environment.remote(@environment)))
+      result = Puppet::Resource::Catalog.indirection.find(
+        Puppet[:node_name_value],
+        query_options.merge(
+          :ignore_terminus => true,
+          :environment     => Puppet::Node::Environment.remote(@environment)
+        )
+      )
     end
     result
   rescue => detail
@@ -431,8 +441,16 @@ class Puppet::Configurer
   def retrieve_new_catalog(query_options)
     result = nil
     @duration = thinmark do
-      result = Puppet::Resource::Catalog.indirection.find(Puppet[:node_name_value],
-        query_options.merge(:ignore_cache => true, :environment => Puppet::Node::Environment.remote(@environment), :fail_on_404 => true))
+      result = Puppet::Resource::Catalog.indirection.find(
+        Puppet[:node_name_value],
+        query_options.merge(
+          :ignore_cache      => true,
+          # We never want to update the cached Catalog if we're running in noop mode.
+          :ignore_cache_save => Puppet[:noop],
+          :environment       => Puppet::Node::Environment.remote(@environment),
+          :fail_on_404       => true
+        )
+      )
     end
     result
   rescue StandardError => detail

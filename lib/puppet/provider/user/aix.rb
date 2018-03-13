@@ -72,6 +72,7 @@ Puppet::Type.type(:user).provide :aix, :parent => Puppet::Provider::AixObject do
                                 :from => :expiry_from_attr },
     {:aix_attr => :maxage,     :puppet_prop => :password_max_age},
     {:aix_attr => :minage,     :puppet_prop => :password_min_age},
+    {:aix_attr => :pwdwarntime, :puppet_prop => :password_warn_days},
     {:aix_attr => :attributes, :puppet_prop => :attributes},
     { :aix_attr => :gecos,      :puppet_prop => :comment },
   ]
@@ -139,8 +140,10 @@ Puppet::Type.type(:user).provide :aix, :parent => Puppet::Provider::AixObject do
   def get_arguments(key, value, mapping, objectinfo)
     # In the case of attributes, return a list of key=vlaue
     if key == :attributes
-      raise Puppet::Error, "Attributes must be a list of pairs key=value on #{@resource.class.name}[#{@resource.name}]" \
-        unless value and value.is_a? Hash
+      unless value and value.is_a? Hash
+        raise Puppet::Error, _("Attributes must be a list of pairs key=value on %{class_name}[%{resource_name}]") %
+            { class_name: @resource.class.name, resource_name: @resource.name }
+      end
       return value.map { |k,v| k.to_s.strip + "=" + v.to_s.strip}
     end
 
@@ -169,9 +172,11 @@ Puppet::Type.type(:user).provide :aix, :parent => Puppet::Provider::AixObject do
   def verify_group(value)
     if value.is_a? Integer
       groupname = groupname_by_id(value)
-      raise ArgumentError, "AIX group must be a valid existing group" unless groupname
+      #TRANSLATORS 'AIX' is the name of the operating system and should not be translated
+      raise ArgumentError, _("AIX group must be a valid existing group") unless groupname
     else
-      raise ArgumentError, "AIX group must be a valid existing group" unless groupid_by_name(value)
+      #TRANSLATORS 'AIX' is the name of the operating system and should not be translated
+      raise ArgumentError, _("AIX group must be a valid existing group") unless groupid_by_name(value)
       groupname = value
     end
     groupname
@@ -207,8 +212,11 @@ Puppet::Type.type(:user).provide :aix, :parent => Puppet::Provider::AixObject do
       #expiry_date = d.strftime("%Y-%m-%d")
       expiry_date = "20#{$5}-#{$1}-#{$2}"
     else
-      Puppet.warn("Could not convert AIX expires date '#{value}' on #{@resource.class.name}[#{@resource.name}]") \
-        unless value == '0'
+      unless value == '0'
+        #TRANSLATORS 'AIX' is the name of an operating system and should not be translated
+        Puppet.warn(_("Could not convert AIX expires date '%{value}' on %{class_name}[%{resource_name}]") %
+                        { value: value, class_name: @resource.class.name, resource_name: @resource.name })
+      end
       expiry_date = :absent
     end
     expiry_date
@@ -285,7 +293,7 @@ Puppet::Type.type(:user).provide :aix, :parent => Puppet::Provider::AixObject do
   def managed_attribute_keys(hash)
     managed_attributes ||= @resource.original_parameters[:attributes] || hash.keys.map{|k| k.to_s}
     managed_attributes = [managed_attributes] unless managed_attributes.is_a?(Array)
-    managed_attributes.map {|attr| key, value = attr.split("="); key.strip.to_sym}
+    managed_attributes.map {|attr| key, _ = attr.split("="); key.strip.to_sym}
   end
 
   def should_include?(key, managed_keys)

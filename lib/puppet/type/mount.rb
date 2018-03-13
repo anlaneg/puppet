@@ -65,7 +65,7 @@ module Puppet
                      # the wrong attributes so I sync AFTER the umount
           return :mount_unmounted
         else
-          raise Puppet::Error, _("Unexpected change from %{current} to unmounted}") % { current: current_value }
+          raise Puppet::Error, _("Unexpected change from %{current} to unmounted") % { current: current_value }
         end
       end
 
@@ -112,7 +112,7 @@ module Puppet
         # Determine if there are any out-of-sync properties.
         oos = @resource.send(:properties).find_all do |prop|
           unless currentvalues.include?(prop)
-            raise Puppet::DevError, "Parent has property %s but it doesn't appear in the current values", [prop.name]
+            raise Puppet::DevError, _("Parent has property %{name} but it doesn't appear in the current values") % { name: prop.name }
           end
           if prop.name == :ensure
             false
@@ -173,8 +173,12 @@ module Puppet
 
     newproperty(:options) do
       desc "A single string containing options for the mount, as they would
-        appear in fstab. For many platforms this is a comma delimited string.
-        Consult the fstab(5) man page for system-specific details."
+        appear in fstab on Linux. For many platforms this is a comma-delimited
+        string. Consult the fstab(5) man page for system-specific details.
+        AIX options other than dev, nodename, or vfs can be defined here. If
+        specified, AIX options of account, boot, check, free, mount, size,
+        type, vol, log, and quota must be ordered alphabetically at the end of
+        the list."
 
       validate do |value|
         raise Puppet::Error, _("options must not contain whitespace: %{value}") % { value: value } if value =~ /\s/

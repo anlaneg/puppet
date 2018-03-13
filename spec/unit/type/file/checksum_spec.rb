@@ -36,6 +36,18 @@ describe checksum do
     expect(@checksum.sum("foobar")).to eq("{sha256}#{sum}")
   end
 
+  it "when using digest_algorithm 'sha512' should return the summed contents with a checksum label" do
+    sum = Digest::SHA512.hexdigest("foobar")
+    @resource[:checksum] = :sha512
+    expect(@checksum.sum("foobar")).to eq("{sha512}#{sum}")
+  end
+
+  it "when using digest_algorithm 'sha384' should return the summed contents with a checksum label" do
+    sum = Digest::SHA384.hexdigest("foobar")
+    @resource[:checksum] = :sha384
+    expect(@checksum.sum("foobar")).to eq("{sha384}#{sum}")
+  end
+
   it "should use :md5 as its default type" do
     expect(@checksum.default).to eq(:md5)
   end
@@ -81,5 +93,13 @@ describe checksum do
     values = checksum.value_collection.values.reject {|v| v == :none}.map {|v| v.to_s}
     Puppet.settings[:supported_checksum_types] = values
     expect(Puppet.settings[:supported_checksum_types]).to eq(values)
+  end
+
+  it 'rejects md5 checksums in FIPS mode' do
+    Puppet::Util::Platform.stubs(:fips_enabled?).returns true
+    expect {
+      @resource[:checksum] = :md5
+    }.to raise_error(Puppet::ResourceError,
+                     /Parameter checksum failed.* MD5 is not supported in FIPS mode/)
   end
 end

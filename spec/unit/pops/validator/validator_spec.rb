@@ -66,6 +66,20 @@ describe "validating 4x" do
       expect(acceptor.error_count).to eql(0)
       expect(acceptor).to have_issue(Puppet::Pops::Issues::DUPLICATE_KEY)
     end
+
+    it 'produces a warning for virtual class resource' do
+      acceptor = validate(parse('@class { test: }'))
+      expect(acceptor.warning_count).to eql(1)
+      expect(acceptor.error_count).to eql(0)
+      expect(acceptor).to have_issue(Puppet::Pops::Issues::CLASS_NOT_VIRTUALIZABLE)
+    end
+
+    it 'produces a  warning for exported class resource' do
+      acceptor = validate(parse('@@class { test: }'))
+      expect(acceptor.warning_count).to eql(1)
+      expect(acceptor.error_count).to eql(0)
+      expect(acceptor).to have_issue(Puppet::Pops::Issues::CLASS_NOT_VIRTUALIZABLE)
+    end
   end
 
   context 'with --strict set to error' do
@@ -75,6 +89,27 @@ describe "validating 4x" do
       expect(acceptor.warning_count).to eql(0)
       expect(acceptor.error_count).to eql(1)
       expect(acceptor).to have_issue(Puppet::Pops::Issues::DUPLICATE_KEY)
+    end
+
+    it 'produces an error for virtual class resource' do
+      acceptor = validate(parse('@class { test: }'))
+      expect(acceptor.warning_count).to eql(0)
+      expect(acceptor.error_count).to eql(1)
+      expect(acceptor).to have_issue(Puppet::Pops::Issues::CLASS_NOT_VIRTUALIZABLE)
+    end
+
+    it 'does not produce an error for regular class resource' do
+      acceptor = validate(parse('class { test: }'))
+      expect(acceptor.warning_count).to eql(0)
+      expect(acceptor.error_count).to eql(0)
+      expect(acceptor).not_to have_issue(Puppet::Pops::Issues::CLASS_NOT_VIRTUALIZABLE)
+    end
+
+    it 'produces an error for exported class resource' do
+      acceptor = validate(parse('@@class { test: }'))
+      expect(acceptor.warning_count).to eql(0)
+      expect(acceptor.error_count).to eql(1)
+      expect(acceptor).to have_issue(Puppet::Pops::Issues::CLASS_NOT_VIRTUALIZABLE)
     end
   end
 
@@ -101,6 +136,96 @@ describe "validating 4x" do
       expect(acceptor.warning_count).to eql(0)
       expect(acceptor.error_count).to eql(1)
       expect(acceptor).to have_issue(Puppet::Pops::Issues::DUPLICATE_DEFAULT)
+    end
+
+    it 'produces a warning for virtual class resource' do
+      acceptor = validate(parse('@class { test: }'))
+      expect(acceptor.warning_count).to eql(1)
+      expect(acceptor.error_count).to eql(0)
+      expect(acceptor).to have_issue(Puppet::Pops::Issues::CLASS_NOT_VIRTUALIZABLE)
+    end
+
+    it 'produces a  warning for exported class resource' do
+      acceptor = validate(parse('@@class { test: }'))
+      expect(acceptor.warning_count).to eql(1)
+      expect(acceptor.error_count).to eql(0)
+      expect(acceptor).to have_issue(Puppet::Pops::Issues::CLASS_NOT_VIRTUALIZABLE)
+    end
+  end
+
+  context 'with --tasks set' do
+    before(:each) { Puppet[:tasks] = true }
+
+    it 'produces an error for application' do
+      acceptor = validate(parse('application test {}'))
+      expect(acceptor.error_count).to eql(1)
+      expect(acceptor).to have_issue(Puppet::Pops::Issues::CATALOG_OPERATION_NOT_SUPPORTED_WHEN_SCRIPTING)
+    end
+
+    it 'produces an error for capability mapping' do
+      acceptor = validate(parse('Foo produces Sql {}'))
+      expect(acceptor.error_count).to eql(1)
+      expect(acceptor).to have_issue(Puppet::Pops::Issues::CATALOG_OPERATION_NOT_SUPPORTED_WHEN_SCRIPTING)
+    end
+
+    it 'produces an error for collect expressions with virtual query' do
+      acceptor = validate(parse("User <| title == 'admin' |>"))
+      expect(acceptor.error_count).to eql(1)
+      expect(acceptor).to have_issue(Puppet::Pops::Issues::CATALOG_OPERATION_NOT_SUPPORTED_WHEN_SCRIPTING)
+    end
+
+    it 'produces an error for collect expressions with exported query' do
+      acceptor = validate(parse("User <<| title == 'admin' |>>"))
+      expect(acceptor.error_count).to eql(1)
+      expect(acceptor).to have_issue(Puppet::Pops::Issues::CATALOG_OPERATION_NOT_SUPPORTED_WHEN_SCRIPTING)
+    end
+
+    it 'produces an error for class expressions' do
+      acceptor = validate(parse('class test {}'))
+      expect(acceptor.error_count).to eql(1)
+      expect(acceptor).to have_issue(Puppet::Pops::Issues::CATALOG_OPERATION_NOT_SUPPORTED_WHEN_SCRIPTING)
+    end
+
+    it 'produces an error for node expressions' do
+      acceptor = validate(parse('node default {}'))
+      expect(acceptor.error_count).to eql(1)
+      expect(acceptor).to have_issue(Puppet::Pops::Issues::CATALOG_OPERATION_NOT_SUPPORTED_WHEN_SCRIPTING)
+    end
+
+    it 'produces an error for relationship expressions' do
+      acceptor = validate(parse('$x -> $y'))
+      expect(acceptor.error_count).to eql(1)
+      expect(acceptor).to have_issue(Puppet::Pops::Issues::CATALOG_OPERATION_NOT_SUPPORTED_WHEN_SCRIPTING)
+    end
+
+    it 'produces an error for resource expressions' do
+      acceptor = validate(parse('notify { nope: }'))
+      expect(acceptor.error_count).to eql(1)
+      expect(acceptor).to have_issue(Puppet::Pops::Issues::CATALOG_OPERATION_NOT_SUPPORTED_WHEN_SCRIPTING)
+    end
+
+    it 'produces an error for resource default expressions' do
+      acceptor = validate(parse("File { mode => '0644' }"))
+      expect(acceptor.error_count).to eql(1)
+      expect(acceptor).to have_issue(Puppet::Pops::Issues::CATALOG_OPERATION_NOT_SUPPORTED_WHEN_SCRIPTING)
+    end
+
+    it 'produces an error for resource override expressions' do
+      acceptor = validate(parse("File['/tmp/foo'] { mode => '0644' }"))
+      expect(acceptor.error_count).to eql(1)
+      expect(acceptor).to have_issue(Puppet::Pops::Issues::CATALOG_OPERATION_NOT_SUPPORTED_WHEN_SCRIPTING)
+    end
+
+    it 'produces an error for resource definitions' do
+      acceptor = validate(parse('define foo($a) {}'))
+      expect(acceptor.error_count).to eql(1)
+      expect(acceptor).to have_issue(Puppet::Pops::Issues::CATALOG_OPERATION_NOT_SUPPORTED_WHEN_SCRIPTING)
+    end
+
+    it 'produces an error for site definitions' do
+      acceptor = validate(parse('site {}'))
+      expect(acceptor.error_count).to eql(1)
+      expect(acceptor).to have_issue(Puppet::Pops::Issues::CATALOG_OPERATION_NOT_SUPPORTED_WHEN_SCRIPTING)
     end
   end
 
@@ -158,7 +283,9 @@ describe "validating 4x" do
       'Foo[a] -> Foo[b]',
       '($a=1)',
       'foo()',
-      '$a.foo()'
+      '$a.foo()',
+      '"foo" =~ /foo/', # may produce or modify $n vars
+      '"foo" !~ /foo/', # may produce or modify $n vars
       ].each do |expr|
 
       it "does not produce error when for productive: #{expr}" do
@@ -423,12 +550,12 @@ describe "validating 4x" do
     context 'that are type aliases' do
       it 'raises errors when RHS is a name that is an invalid reference' do
         source = 'type MyInt = integer'
-        expect(validate(parse(source))).to have_issue(Puppet::Pops::Issues::ILLEGAL_EXPRESSION)
+        expect { parse(source) }.to raise_error(/Syntax error at 'integer'/)
       end
 
       it 'raises errors when RHS is an AccessExpression with a name that is an invalid reference on LHS' do
         source = 'type IntegerArray = array[Integer]'
-        expect(validate(parse(source))).to have_issue(Puppet::Pops::Issues::ILLEGAL_EXPRESSION)
+        expect { parse(source) }.to raise_error(/Syntax error at 'array'/)
       end
     end
 
@@ -522,6 +649,16 @@ describe "validating 4x" do
 
     it 'rejects a literal integer outside of min signed 64 bit range' do
       expect(validate(parse("-0x8000000000000001"))).to have_issue(Puppet::Pops::Issues::NUMERIC_OVERFLOW)
+    end
+  end
+
+  context 'uses a var pattern that is performant' do
+    it 'such that illegal VAR_NAME is not too slow' do
+      t = Time.now.nsec
+      result = '$hg_oais::archivematica::requirements::automation_tools::USER' =~ Puppet::Pops::Patterns::VAR_NAME
+      t2 = Time.now.nsec
+      expect(result).to be(nil)
+      expect(t2-t).to be < 1000000 # one ms as a check for very slow operation, is in fact at ~< 10 microsecond 
     end
   end
 

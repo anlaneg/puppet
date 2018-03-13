@@ -10,7 +10,7 @@ require 'puppet/util/psych_support'
 class Puppet::Indirector::Request
   include Puppet::Util::PsychSupport
 
-  attr_accessor :key, :method, :options, :instance, :node, :ip, :authenticated, :ignore_cache, :ignore_terminus
+  attr_accessor :key, :method, :options, :instance, :node, :ip, :authenticated, :ignore_cache, :ignore_cache_save, :ignore_terminus
 
   attr_accessor :server, :port, :uri, :protocol
 
@@ -18,7 +18,7 @@ class Puppet::Indirector::Request
 
   # trusted_information is specifically left out because we can't serialize it
   # and keep it "trusted"
-  OPTION_ATTRIBUTES = [:ip, :node, :authenticated, :ignore_terminus, :ignore_cache, :instance, :environment]
+  OPTION_ATTRIBUTES = [:ip, :node, :authenticated, :ignore_terminus, :ignore_cache, :ignore_cache_save, :instance, :environment]
 
   # Is this an authenticated request?
   def authenticated?
@@ -41,10 +41,6 @@ class Puppet::Indirector::Request
     end
   end
 
-  def escaped_key
-    URI.escape(key)
-  end
-
   # LAK:NOTE This is a messy interface to the cache, and it's only
   # used by the Configurer class.  I decided it was better to implement
   # it now and refactor later, when we have a better design, than
@@ -52,6 +48,10 @@ class Puppet::Indirector::Request
   # not be any better.
   def ignore_cache?
     ignore_cache
+  end
+
+  def ignore_cache_save?
+    ignore_cache_save
   end
 
   def ignore_terminus?
@@ -143,7 +143,7 @@ class Puppet::Indirector::Request
 
   def encode_params(params)
     params.collect do |key, value|
-      "#{key}=#{CGI.escape(value.to_s)}"
+      "#{key}=#{Puppet::Util.uri_query_encode(value.to_s)}"
     end.join("&")
   end
 
@@ -203,7 +203,7 @@ class Puppet::Indirector::Request
       if primary_server = Puppet.settings[:server_list][0]
         bound_server = primary_server[0]
       else
-        bound_server = nil
+        bound_server = Puppet.settings[:server]
       end
     end
 
@@ -213,11 +213,11 @@ class Puppet::Indirector::Request
       if primary_server = Puppet.settings[:server_list][0]
         bound_port = primary_server[1]
       else
-        bound_port = nil
+        bound_port = Puppet.settings[:masterport]
       end
     end
-    self.server = default_server || bound_server || Puppet.settings[:server]
-    self.port   = default_port || bound_port || Puppet.settings[:masterport]
+    self.server = default_server || bound_server
+    self.port   = default_port || bound_port
 
     Puppet.debug "No more servers left, falling back to #{self.server}:#{self.port}" if Puppet.settings[:use_srv_records]
 
@@ -243,9 +243,8 @@ class Puppet::Indirector::Request
   def set_uri_key(key)
     @uri = key
     begin
-      # calling URI.escape for UTF-8 characters will % escape them
-      # and the resulting string components of the URI are now ASCII
-      uri = URI.parse(URI.escape(key))
+      # calling uri_encode for UTF-8 characters will % escape them and keep them UTF-8
+      uri = URI.parse(Puppet::Util.uri_encode(key))
     rescue => detail
       raise ArgumentError, _("Could not understand URL %{key}: %{detail}") % { key: key, detail: detail }, detail.backtrace
     end
@@ -274,8 +273,6 @@ class Puppet::Indirector::Request
       @protocol = uri.scheme
     end
 
-    # The unescaped bytes are correct but in ASCII and must be treated
-    # as UTF-8 for the sake of performing string comparisons later
-    @key = URI.unescape(uri.path.sub(/^\//, '')).force_encoding(Encoding::UTF_8)
+    @key = URI.unescape(uri.path.sub(/^\//, ''))
   end
 end
